@@ -1,0 +1,479 @@
+// Prisma Schema - Wholesale Medicine ERP & POS System (Phase 1, 2, 3 Extensions)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────
+// Phase 1: Company Profile Configuration
+// ─────────────────────────────────────────────
+model Company {
+  id              String   @id @default(uuid())
+  name            String
+  tagline         String?
+  address         String
+  city            String   @default("Karachi")
+  country         String   @default("Pakistan")
+  phone           String
+  email           String?
+  ntnTaxNo        String?
+  drugLicenseNo   String?
+  logoUrl         String?
+  currency        String   @default("PKR")
+  currencySymbol  String   @default("Rs.")
+  defaultTaxRate  Float    @default(0.0)
+  fiscalYearStart DateTime @default(now())
+  fiscalYearEnd   DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  branches Branch[]
+}
+
+// ─────────────────────────────────────────────
+// Phase 1: Branch Management (Multi-Branch Support)
+// ─────────────────────────────────────────────
+model Branch {
+  id          String   @id @default(uuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branchCode  String   @unique
+  name        String
+  city        String   @default("Karachi")
+  address     String
+  phone       String
+  isMain      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  users User[]
+}
+
+// ─────────────────────────────────────────────
+// Phase 1: User Management & System Roles
+// ─────────────────────────────────────────────
+model User {
+  id             String   @id @default(uuid())
+  branchId       String?
+  branch         Branch?  @relation(fields: [branchId], references: [id])
+  username       String   @unique
+  fullName       String
+  email          String?
+  password       String   @default("123456")
+  role           String   @default("Admin")
+  salary         Float    @default(45000.0)
+  joiningDate    DateTime @default(now())
+  commissionRate Float    @default(2.5)
+  overtimeRate   Float    @default(350.0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  permissions UserPermission[]
+}
+
+// ─────────────────────────────────────────────
+// Phase 1: Granular User Permissions
+// ─────────────────────────────────────────────
+model UserPermission {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module     String   
+  canCreate  Boolean  @default(true)
+  canEdit    Boolean  @default(true)
+  canDelete  Boolean  @default(false)
+  canView    Boolean  @default(true)
+  canApprove Boolean  @default(false)
+  canPrint   Boolean  @default(true)
+  canExport  Boolean  @default(true)
+
+  @@unique([userId, module])
+}
+
+// ─────────────────────────────────────────────
+// Vendor: Medicine suppliers / distributors
+// ─────────────────────────────────────────────
+model Vendor {
+  id        String   @id @default(uuid())
+  vendorNo  Int      @unique
+  name      String
+  area      String   @default("Main Wholesale Market")
+  contactNo String   @default("N/A")
+  createdAt DateTime @default(now())
+
+  products  Product[]
+  purchases Purchase[]
+  claims    SupplierClaim[]
+}
+
+// ─────────────────────────────────────────────
+// Customer: Wholesale buyers
+// ─────────────────────────────────────────────
+model Customer {
+  id           String   @id @default(uuid())
+  accountNo    Int      @unique
+  name         String
+  address      String?
+  contactNo    String?
+  customerType String   @default("Retailer")
+  createdAt    DateTime @default(now())
+
+  invoices Invoice[]
+}
+
+// ─────────────────────────────────────────────
+// Phase 2 & 3: Product & Inventory Control
+// ─────────────────────────────────────────────
+model Product {
+  id                  String    @id @default(uuid())
+  productCode         String    @unique
+  name                String
+  genericName         String?   
+  brandName           String?   
+  companyName         String?   
+  category            String?   @default("Tablets")
+  subcategory         String?
+  barcode             String?
+  sku                 String?
+  unit                String    @default("Box")
+  packSize            String    @default("10x10")
+  vendorId            String
+  vendor              Vendor    @relation(fields: [vendorId], references: [id])
+  purchasePrice       Float     @default(0.0)
+  tradePrice          Float     
+  mrp                 Float     @default(0.0)
+  retailPrice         Float
+  wholesalePrice      Float     @default(0.0)
+  costPrice           Float
+  extraDiscount       Float     @default(0.0)
+  stockQuantity       Int       @default(0)
+  reservedStock       Int       @default(0)
+  availableStock      Int       @default(0)
+  minStock            Int       @default(10)
+  maxStock            Int       @default(1000)
+  batchNo             String?
+  mfgDate             DateTime?
+  expiryDate          DateTime?
+  drugRegNo           String?   
+  storageInstructions String?   @default("Store below 25°C")
+  isQuarantined       Boolean   @default(false)
+  quarantineReason    String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @default(now()) @updatedAt
+
+  invoiceItems     InvoiceItem[]
+  purchaseItems    PurchaseItem[]
+  stockAdjustments StockAdjustment[]
+  claimItems       SupplierClaimItem[]
+  batches          ProductBatch[]
+}
+
+// ─────────────────────────────────────────────
+// ProductBatch: Multi-batch & Expiry tracking per product
+// ─────────────────────────────────────────────
+model ProductBatch {
+  id                  String       @id @default(uuid())
+  productId           String
+  product             Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  batchNo             String
+  mfgDate             DateTime?
+  expiryDate          DateTime?
+  expiryDateFormatted String?      // e.g. "12/27" or "12/2027" or "31/12/2027"
+  quantity            Int          @default(0) // Available quantity in this batch
+  costPrice           Float        @default(0.0)
+  tradePrice          Float        @default(0.0)
+  retailPrice         Float        @default(0.0)
+  purchaseId          String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @default(now()) @updatedAt
+
+  invoiceItems        InvoiceItem[]
+  @@unique([productId, batchNo])
+}
+
+// ─────────────────────────────────────────────
+// Phase 3: Stock Adjustments & Returns Log
+// Adjustment Types: Damaged, Expired, PhysicalCount, Return, AdjustmentIn, AdjustmentOut
+// ─────────────────────────────────────────────
+model StockAdjustment {
+  id             String   @id @default(uuid())
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  adjustmentType String   // Damaged, Expired, PhysicalCount, Return, AdjustmentIn, AdjustmentOut
+  quantity       Int
+  previousStock  Int
+  newStock       Int
+  reason         String?
+  adjustedBy     String   @default("Admin")
+  createdAt      DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// Purchase: Medicine Purchase Bill / Purchase Order from Vendor
+// ─────────────────────────────────────────────
+model Purchase {
+  id           String         @id @default(uuid())
+  purchaseNo   String         @unique
+  vendorId     String
+  vendor       Vendor         @relation(fields: [vendorId], references: [id])
+  vendorName   String?
+  vendorArea   String?
+  purchaseDate DateTime       @default(now())
+  salesman     String?
+  totalAmount  Float
+  createdAt    DateTime       @default(now())
+
+  items PurchaseItem[]
+}
+
+// ─────────────────────────────────────────────
+// PurchaseItem: Line item within a Purchase Bill
+// ─────────────────────────────────────────────
+model PurchaseItem {
+  id            String   @id @default(uuid())
+  purchaseId    String
+  purchase      Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+  batchNo       String?
+  expiryDate    DateTime?
+  stp           Float
+  quantity      Int
+  bonus         Int      @default(0)
+  discount      Float    @default(0)
+  extraDiscount Float    @default(0)
+  salesTax      Float    @default(0)
+  netAmount     Float
+}
+
+// ─────────────────────────────────────────────
+// Invoice: A wholesale sale transaction to customer
+// ─────────────────────────────────────────────
+model Invoice {
+  id                 String    @id @default(uuid())
+  invoiceNo          String    @unique
+  customerId         String
+  customer           Customer  @relation(fields: [customerId], references: [id])
+  customerName       String?
+  customerAddress    String?
+  invoiceDate        DateTime
+  salesman           String
+  totalAmount        Float
+  status             String    @default("Active") // "Active", "Returned"
+  isReturned         Boolean   @default(false)
+  returnDate         DateTime?
+  returnRefundMethod String?   // "Cash", "Bank", "AccountCredit"
+  returnRefundAmount Float?    @default(0.0)
+  returnReason       String?
+  createdAt          DateTime  @default(now())
+
+  items InvoiceItem[]
+}
+
+// ─────────────────────────────────────────────
+// InvoiceItem: Line item within a sale invoice
+// ─────────────────────────────────────────────
+model InvoiceItem {
+  id        String        @id @default(uuid())
+  invoiceId String
+  invoice   Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product       @relation(fields: [productId], references: [id])
+  batchId   String?
+  batch     ProductBatch? @relation(fields: [batchId], references: [id])
+  batchNo   String?
+  expiryDate DateTime?
+  stp       Float
+  costPrice Float         @default(0.0)
+  quantity  Int
+  bonus     Int           @default(0)
+  discount  Float         @default(0)
+  salesTax  Float         @default(0)
+  netAmount Float
+}
+
+// ─────────────────────────────────────────────
+// AccountTransaction: Financial voucher / Ledger entry
+// Types: CustomerReceipt, SupplierPayment, Expense, JournalEntry
+// ─────────────────────────────────────────────
+model AccountTransaction {
+  id              String   @id @default(uuid())
+  voucherNo       String   @unique
+  transactionType String   // CustomerReceipt, SupplierPayment, Expense, JournalEntry
+  partyType       String   // Customer, Vendor, GeneralExpense, Account
+  partyId         String?
+  partyName       String?
+  amount          Float
+  paymentMethod   String   @default("Cash") // Cash, BankTransfer, Cheque
+  referenceNo     String?
+  description     String?
+  transactionDate DateTime @default(now())
+  createdAt       DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// SupplierClaim: Expired/Damaged/Shortage Return Debit Note to Vendor
+// Status: Pending, Approved, Adjusted, Refunded, Rejected
+// ─────────────────────────────────────────────
+model SupplierClaim {
+  id            String              @id @default(uuid())
+  claimNo       String              @unique
+  vendorId      String
+  vendor        Vendor              @relation(fields: [vendorId], references: [id])
+  claimDate     DateTime            @default(now())
+  claimType     String              @default("ExpiredReturn") // ExpiredReturn, DamagedGoods, Shortage, Recall
+  status        String              @default("Pending")       // Pending, Approved, Adjusted, Refunded, Rejected
+  totalAmount   Float
+  notes         String?
+  createdByName String              @default("Admin")
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @default(now()) @updatedAt
+
+  items SupplierClaimItem[]
+}
+
+model SupplierClaimItem {
+  id         String        @id @default(uuid())
+  claimId    String
+  claim      SupplierClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product       @relation(fields: [productId], references: [id])
+  batchNo    String?
+  expiryDate DateTime?
+  unitPrice  Float
+  quantity   Int
+  netAmount  Float
+  reason     String?
+}
+
+// ─────────────────────────────────────────────
+// Phase 12: HR & Payroll Management Models
+// ─────────────────────────────────────────────
+model Employee {
+  id              String   @id @default(uuid())
+  empNo           String   @unique
+  fullName        String
+  cnic            String?
+  phone           String?
+  email           String?
+  designation     String   @default("Pharmacist")
+  department      String   @default("Pharmacy Operations")
+  basicSalary     Float    @default(0)
+  commissionRate  Float    @default(0) // Sales commission %
+  joiningDate     DateTime @default(now())
+  bankAccount     String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  attendances     Attendance[]
+  leaves          LeaveRequest[]
+  payrolls        Payroll[]
+  advances        SalaryAdvance[]
+}
+
+model Attendance {
+  id          String   @id @default(uuid())
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date        DateTime @default(now())
+  status      String   @default("Present") // Present, Absent, Late, HalfDay, OnLeave
+  timeIn      String?
+  timeOut     String?
+  overtimeHrs Float    @default(0)
+  notes       String?
+}
+
+model LeaveRequest {
+  id          String   @id @default(uuid())
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType   String   @default("Casual") // Casual, Sick, Annual, Unpaid
+  startDate   DateTime
+  endDate     DateTime
+  totalDays   Int      @default(1)
+  reason      String?
+  status      String   @default("Pending") // Pending, Approved, Rejected
+  createdAt   DateTime @default(now())
+}
+
+model SalaryAdvance {
+  id            String    @id @default(uuid())
+  advanceNo     String    @unique
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  amount        Float
+  requestDate   DateTime  @default(now())
+  disbursedDate DateTime?
+  reason        String?
+  paymentMethod String    @default("Cash") // Cash, BankTransfer, Cheque
+  status        String    @default("Approved") // Pending, Approved, DeductedInPayroll, Rejected
+  deductedAt    DateTime?
+  payrollSlipNo String?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+}
+
+model Payroll {
+  id               String    @id @default(uuid())
+  payrollNo        String    @unique
+  employeeId       String
+  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  monthYear        String    // Format: "YYYY-MM" (e.g., "2026-08")
+  basicSalary      Float
+  overtimePay      Float     @default(0)
+  salesCommission  Float     @default(0)
+  advanceDeduction Float     @default(0)
+  deductions       Float     @default(0)
+  netSalary        Float
+  paymentStatus    String    @default("Unpaid") // Unpaid, Paid
+  paymentDate      DateTime?
+  paymentMethod    String    @default("BankTransfer") // Cash, BankTransfer, Cheque
+  createdAt        DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────────
+// Phase 13: Fixed Asset Register & Depreciation
+// ─────────────────────────────────────────────
+model FixedAsset {
+  id                 String              @id @default(uuid())
+  assetCode          String              @unique // AST-1001, AST-1002
+  name               String              // e.g. "Gree 1.5 Ton Inverter AC", "Executive Office Chair"
+  category           String              @default("Store Machinery & AC") // "Furniture & Fixtures", "Electronics & IT", "Store Machinery & AC", "Shop Renovation & Display", "Vehicles"
+  purchaseDate       DateTime            @default(now())
+  purchaseCost       Float               // e.g. 100000
+  usefulLifeYears    Float               @default(10.0) // e.g. 10 years
+  salvageValue       Float               @default(0.0) // Scrap value at end of life
+  depreciationMethod String              @default("StraightLine") // "StraightLine", "FixedAnnualAmount", "PercentageRate"
+  annualDepreciation Float               @default(0.0) // e.g. 10000 per year
+  location           String?             @default("Main Shop Floor")
+  supplierOrVendor   String?             // Where it was bought from
+  invoiceReceiptNo   String?             // Purchase receipt reference
+  paymentMethod      String              @default("Cash") // Cash, BankTransfer, OwnerPersonalFunds
+  status             String              @default("Active") // Active, UnderMaintenance, Sold, Disposed
+  notes              String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @default(now()) @updatedAt
+
+  depreciations      AssetDepreciation[]
+}
+
+model AssetDepreciation {
+  id                 String     @id @default(uuid())
+  assetId            String
+  asset              FixedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  periodLabel        String     // e.g. "Year 2026", "Month Sep-2026"
+  depreciationAmount Float      // e.g. 10000
+  bookValueBefore    Float      // e.g. 100000
+  bookValueAfter     Float      // e.g. 90000
+  recordedAt         DateTime   @default(now())
+  notes              String?
+}

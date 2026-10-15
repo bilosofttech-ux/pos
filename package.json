@@ -1,0 +1,21 @@
+{
+  "name": "pos-erp-backend",
+  "version": "1.0.0",
+  "description": "Production Express Backend for POS ERP System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "postinstall": "prisma generate --schema=prisma/schema.prisma",
+    "prisma:generate": "prisma generate --schema=prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "pos-erp-workspace": "file:.."
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  }
+}
