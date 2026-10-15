@@ -7,6 +7,7 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.join(__dirname, '.env') });
 dotenv.config();
 const prisma = require('./lib/prisma');
+try { require('./db'); } catch (e) {}
 
 const serverPort = process.env.PORT || 5000;
 const app = express();
