@@ -101,28 +101,21 @@ app.use((err, req, res, next) => {
 });
 
 // Server Initialization
-async function startServer() {
-  try {
-    await prisma.$connect();
-    console.log('✅ Connected to live PostgreSQL Database via Prisma Client.');
-  } catch (error) {
-    console.warn('⚠️ PostgreSQL connection failed:', error.message);
+const server = app.listen(serverPort, () => {
+  console.log(`🚀 Express server running on port ${serverPort}`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`⚠️ Port ${serverPort} is already in use by another process.`);
+  } else {
+    console.error('Server error:', err);
   }
+});
 
-  const server = app.listen(serverPort, '0.0.0.0', () => {
-    console.log(`🚀 Express server running on http://0.0.0.0:${serverPort} (Accessible by Android Emulator at http://10.0.2.2:${serverPort})`);
-  });
-
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(`⚠️ Port ${serverPort} is already in use by another process.`);
-    } else {
-      console.error('Server error:', err);
-    }
-  });
-}
-
-startServer();
+prisma.$connect()
+  .then(() => console.log('✅ Connected to live PostgreSQL Database via Prisma Client.'))
+  .catch((error) => console.warn('⚠️ PostgreSQL connection failed:', error.message));
 
 // Graceful Shutdown Handlers
 process.on('SIGINT', async () => {
