@@ -26,7 +26,17 @@ async function ensureCounterSaleCustomer() {
 router.get('/', async (req, res, next) => {
   try {
     await ensureCounterSaleCustomer();
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const where = {};
+    if (userId && userRole !== 'SuperAdmin') {
+      where.OR = [
+        { userId: userId },
+        { accountNo: 1 },
+      ];
+    }
     const customers = await prisma.customer.findMany({
+      where,
       orderBy: { accountNo: 'asc' },
     });
     res.json(customers);

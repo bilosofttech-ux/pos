@@ -111,12 +111,16 @@ router.get('/expense-heads', async (req, res) => {
 // 1. GET /api/accounts/summary - Financial Dashboard Accounts Overview
 router.get('/summary', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
+
     const [invoices, purchases, transactions, customers, vendors] = await Promise.all([
-      prisma.invoice.findMany(),
-      prisma.purchase.findMany(),
+      prisma.invoice.findMany({ where: isTenant ? { userId } : {} }),
+      prisma.purchase.findMany({ where: isTenant ? { userId } : {} }),
       prisma.accountTransaction.findMany(),
-      prisma.customer.findMany(),
-      prisma.vendor.findMany(),
+      prisma.customer.findMany({ where: isTenant ? { OR: [{ userId }, { accountNo: 1 }] } : {} }),
+      prisma.vendor.findMany({ where: isTenant ? { OR: [{ userId }, { vendorNo: 1 }] } : {} }),
     ]);
 
     let totalSalesRevenue = 0;

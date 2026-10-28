@@ -32,7 +32,17 @@ async function ensureDefaultVendors() {
 router.get('/', async (req, res, next) => {
   try {
     await ensureDefaultVendors();
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const where = {};
+    if (userId && userRole !== 'SuperAdmin') {
+      where.OR = [
+        { userId: userId },
+        { vendorNo: 1 },
+      ];
+    }
     const vendors = await prisma.vendor.findMany({
+      where,
       orderBy: { vendorNo: 'asc' },
     });
 

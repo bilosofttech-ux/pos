@@ -43,15 +43,7 @@ router.get('/', async (req, res) => {
     const userId = req.headers['x-user-id'] || req.query.userId;
     const userRole = req.headers['x-user-role'];
     if (userId && userRole !== 'SuperAdmin') {
-      if (userId === '2b671b9a-89d9-4dfe-b4de-aaec3a5339aa') {
-        where.OR = [
-          ...(where.OR ? where.OR : []),
-          { userId: userId },
-          { userId: null },
-        ];
-      } else {
-        where.userId = userId;
-      }
+      where.userId = userId;
     }
 
     const products = await prisma.product.findMany({
@@ -655,60 +647,110 @@ router.post('/', async (req, res) => {
       storageInstructions,
     } = req.body;
 
-    if (!name) {
+    if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'Medicine Product Name is required' });
     }
 
-    // Resolve or find default Vendor ID
-    let finalVendorId = vendorId;
+    const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
+
+    // Resolve or find default Vendor ID safely
+    let finalVendorId = null;
+    if (vendorId) {
+      const existingVend = await prisma.vendor.findUnique({ where: { id: vendorId } }).catch(() => null);
+      if (existingVend) finalVendorId = existingVend.id;
+    }
     if (!finalVendorId) {
-      let defaultVendor = await prisma.vendor.findFirst();
+      let defaultVendor = await prisma.vendor.findFirst({
+        where: currentTenantUserId ? { OR: [{ userId: currentTenantUserId }, { vendorNo: 1 }] } : { vendorNo: 1 },
+      });
       if (!defaultVendor) {
+        const allVendors = await prisma.vendor.findMany({ select: { vendorNo: true } });
+        const maxVNo = allVendors.reduce((max, v) => Math.max(max, v.vendorNo || 0), 0);
         defaultVendor = await prisma.vendor.create({
-          data: { name: 'General Pharma Distributor', area: 'Main Market', contactNo: '+92 300 0000000' },
+          data: {
+            userId: currentTenantUserId,
+            vendorNo: maxVNo + 1,
+            name: 'General Pharma Distributor',
+            area: 'Main Wholesale Market',
+            contactNo: '+92 300 0000000',
+          },
         });
       }
       finalVendorId = defaultVendor.id;
     }
 
-    // Auto-generate Product Code if omitted
-    let finalCode = productCode;
-    if (!finalCode) {      finalCode = 'P-' + Date.now().toString().slice(-6) + '-' + Math.floor(10 + Math.random() * 90);
+    // Auto-generate clean sequential Product Code if omitted
+    let finalCode = productCode ? String(productCode).trim() : '';
+    if (!finalCode) {
+      const userProducts = await prisma.product.findMany({
+        where: currentTenantUserId ? { userId: currentTenantUserId } : {},
+        select: { productCode: true },
+      });
+      const nums = userProducts
+        .map((p) => parseInt(p.productCode, 10))
+        .filter((n) => !isNaN(n));
+      const maxNo = nums.length > 0 ? Math.max(...nums) : 0;
+      finalCode = String(maxNo + 1);
     }
 
-    const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
+    const safeParseDate = (d) => {
+      if (!d) return null;
+      const dt = new Date(d);
+      return isNaN(dt.getTime()) ? null : dt;
+    };
+
     const newProduct = await prisma.product.create({
       data: {
         userId: currentTenantUserId,
         productCode: String(finalCode),
-        name,
-        genericName,
-        brandName,
-        companyName,
+        name: name.trim(),
+        genericName: genericName ? String(genericName).trim() : null,
+        brandName: brandName ? String(brandName).trim() : null,
+        companyName: companyName ? String(companyName).trim() : 'GSK Pakistan',
         category: category || 'Tablets',
         subcategory,
-        barcode,
-        sku,
+        barcode: barcode ? String(barcode).trim() : null,
+        sku: sku ? String(sku).trim() : null,
         unit: unit || 'Box',
         packSize: packSize || '10x10',
         vendorId: finalVendorId,
-        purchasePrice: parseFloat(purchasePrice || 0),
-        tradePrice: parseFloat(tradePrice || 0),
-        mrp: parseFloat(mrp || 0),
-        retailPrice: parseFloat(retailPrice || 0),
-        wholesalePrice: parseFloat(wholesalePrice || 0),
-        costPrice: parseFloat(costPrice || tradePrice || 0),
-        stockQuantity: parseInt(stockQuantity || 0, 10),
-        minStock: parseInt(minStock || 10, 10),
-        maxStock: parseInt(maxStock || 1000, 10),
-        batchNo,
-        mfgDate: mfgDate ? new Date(mfgDate) : null,
-        expiryDate: expiryDate ? new Date(expiryDate) : null,
+        purchasePrice: parseFloat(purchasePrice || 0) || 0,
+        tradePrice: parseFloat(tradePrice || 0) || 0,
+        mrp: parseFloat(mrp || 0) || 0,
+        retailPrice: parseFloat(retailPrice || 0) || 0,
+        wholesalePrice: parseFloat(wholesalePrice || 0) || 0,
+        costPrice: parseFloat(costPrice || tradePrice || 0) || 0,
+        stockQuantity: parseInt(stockQuantity || 0, 10) || 0,
+        minStock: parseInt(minStock || 10, 10) || 10,
+        maxStock: parseInt(maxStock || 1000, 10) || 1000,
+        batchNo: batchNo || 'B-101',
+        mfgDate: safeParseDate(mfgDate),
+        expiryDate: safeParseDate(expiryDate),
         drugRegNo,
         storageInstructions: storageInstructions || 'Store below 25°C',
       },
       include: { vendor: true },
     });
+
+    // Automatically create initial ProductBatch record if batch or stock is provided
+    if (newProduct.stockQuantity > 0 || batchNo) {
+      try {
+        await prisma.productBatch.create({
+          data: {
+            productId: newProduct.id,
+            batchNo: batchNo || 'B-101',
+            expiryDate: newProduct.expiryDate || null,
+            expiryDateFormatted: formatExpiryDate(newProduct.expiryDate),
+            quantity: Math.max(0, newProduct.stockQuantity || 0),
+            costPrice: newProduct.costPrice || 0,
+            tradePrice: newProduct.tradePrice || 0,
+            retailPrice: newProduct.retailPrice || 0,
+          },
+        });
+      } catch (batchErr) {
+        console.warn('Initial product batch creation notice:', batchErr.message);
+      }
+    }
 
     res.status(201).json(newProduct);
   } catch (error) {
@@ -716,7 +758,7 @@ router.post('/', async (req, res) => {
     if (error.code === 'P2002') {
       return res.status(400).json({ error: 'Product Code already exists' });
     }
-    res.status(500).json({ error: 'Failed to create product' });
+    res.status(500).json({ error: error.message || 'Failed to create product' });
   }
 });
 

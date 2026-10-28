@@ -1,6 +1,28 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const crypto = require('crypto');
+
+function hashPassword(password) {
+  if (!password) return '';
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `scrypt:${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedPassword) {
+  if (!storedPassword || !password) return false;
+  if (storedPassword.startsWith('scrypt:')) {
+    const [, salt, hash] = storedPassword.split(':');
+    try {
+      const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
+      return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(verifyHash, 'hex'));
+    } catch (e) {
+      return false;
+    }
+  }
+  return storedPassword === password;
+}
 
 // Available ERP Roles
 const SYSTEM_ROLES = [
@@ -147,7 +169,7 @@ router.post('/register', async (req, res) => {
         fullName: fullName.trim(),
         email: cleanEmail,
         username: cleanUsername,
-        password: cleanPassword,
+        password: hashPassword(cleanPassword),
         role: 'Admin',
         isActive: true,
         authProvider: 'email',
@@ -283,16 +305,24 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ error: 'Account disabled. Please contact administrator.' });
     }
 
-    if (user.password.trim() !== cleanPassword) {
+    const isPasswordValid = verifyPassword(cleanPassword, user.password.trim());
+    if (!isPasswordValid) {
       if (cleanId === 'admin' && cleanPassword === 'admin') {
+        const hashedAdmin = hashPassword('admin');
         await prisma.user.update({
           where: { id: user.id },
-          data: { password: 'admin', isActive: true },
+          data: { password: hashedAdmin, isActive: true },
         });
-        user.password = 'admin';
+        user.password = hashedAdmin;
       } else {
         return res.status(401).json({ error: 'Invalid username or password' });
       }
+    } else if (!user.password.startsWith('scrypt:')) {
+      // Auto upgrade plain text to scrypt
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { password: hashPassword(cleanPassword) }
+      }).catch(() => null);
     }
 
     res.json({

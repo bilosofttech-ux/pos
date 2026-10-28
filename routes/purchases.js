@@ -56,7 +56,15 @@ let inMemoryPurchases = [];
 // GET /api/purchases - Read all purchase bills from PostgreSQL
 router.get('/', async (req, res, next) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const where = {};
+    if (userId && userRole !== 'SuperAdmin') {
+      where.userId = userId;
+    }
+
     const purchases = await prisma.purchase.findMany({
+      where,
       include: {
         vendor: true,
         items: { include: { product: true } },
@@ -227,6 +235,7 @@ router.get('/last-item-purchase', async (req, res) => {
 router.post('/', async (req, res, next) => {
   try {
     const { purchaseNo, vendorId, vendorCode, vendorName, vendorArea, salesman, totalAmount, items } = req.body;
+    const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'At least one product item is required in the purchase bill.' });
@@ -453,6 +462,7 @@ router.post('/', async (req, res, next) => {
     // 5. Create Purchase Bill & Items in PostgreSQL
     const createdPurchase = await prisma.purchase.create({
       data: {
+        userId: currentTenantUserId,
         purchaseNo: targetPurchaseNo,
         vendorId: targetVendorId,
         vendorName: resolvedVendName,

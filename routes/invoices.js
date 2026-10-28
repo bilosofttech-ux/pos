@@ -8,13 +8,23 @@ let inMemoryInvoices = [];
 router.get('/', async (req, res, next) => {
   try {
     const { search } = req.query;
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
 
     const where = {};
+    if (userId && userRole !== 'SuperAdmin') {
+      where.userId = userId;
+    }
+
     if (search) {
-      where.OR = [
-        { invoiceNo: { contains: search } },
-        { customer: { name: { contains: search } } },
-        { salesman: { contains: search } },
+      where.AND = [
+        {
+          OR: [
+            { invoiceNo: { contains: search } },
+            { customer: { name: { contains: search } } },
+            { salesman: { contains: search } },
+          ],
+        },
       ];
     }
 
@@ -617,6 +627,7 @@ router.get('/:invoiceNo', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const { invoiceNo, customerId, customerCode, customerName, customerAddress, salesman, totalAmount, items } = req.body;
+    const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'At least one item is required in the invoice.' });
@@ -825,6 +836,7 @@ router.post('/', async (req, res, next) => {
         // Create Invoice Record
         const createdInvoice = await tx.invoice.create({
           data: {
+            userId: currentTenantUserId,
             invoiceNo: finalInvoiceNo,
             customerId: targetCustomerId,
             customerName: resolvedCustName,
