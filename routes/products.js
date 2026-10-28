@@ -40,6 +40,20 @@ router.get('/', async (req, res) => {
       where.companyName = { contains: company, mode: 'insensitive' };
     }
 
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    if (userId && userRole !== 'SuperAdmin') {
+      if (userId === '2b671b9a-89d9-4dfe-b4de-aaec3a5339aa') {
+        where.OR = [
+          ...(where.OR ? where.OR : []),
+          { userId: userId },
+          { userId: null },
+        ];
+      } else {
+        where.userId = userId;
+      }
+    }
+
     const products = await prisma.product.findMany({
       where,
       include: {
@@ -659,13 +673,13 @@ router.post('/', async (req, res) => {
 
     // Auto-generate Product Code if omitted
     let finalCode = productCode;
-    if (!finalCode) {
-      const count = await prisma.product.count();
-      finalCode = String(count + 1);
+    if (!finalCode) {      finalCode = 'P-' + Date.now().toString().slice(-6) + '-' + Math.floor(10 + Math.random() * 90);
     }
 
+    const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
     const newProduct = await prisma.product.create({
       data: {
+        userId: currentTenantUserId,
         productCode: String(finalCode),
         name,
         genericName,

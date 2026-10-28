@@ -72,6 +72,10 @@ model User {
   commissionRate Float    @default(2.5)
   overtimeRate   Float    @default(350.0)
   isActive       Boolean  @default(true)
+  resetToken     String?
+  resetTokenExpires DateTime?
+  avatarUrl      String?
+  authProvider   String?  @default("email")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @default(now()) @updatedAt
 
@@ -102,6 +106,7 @@ model UserPermission {
 // ─────────────────────────────────────────────
 model Vendor {
   id        String   @id @default(uuid())
+  userId    String?
   vendorNo  Int      @unique
   name      String
   area      String   @default("Main Wholesale Market")
@@ -118,6 +123,7 @@ model Vendor {
 // ─────────────────────────────────────────────
 model Customer {
   id           String   @id @default(uuid())
+  userId       String?
   accountNo    Int      @unique
   name         String
   address      String?
@@ -133,7 +139,8 @@ model Customer {
 // ─────────────────────────────────────────────
 model Product {
   id                  String    @id @default(uuid())
-  productCode         String    @unique
+  userId              String?
+  productCode         String
   name                String
   genericName         String?   
   brandName           String?   
@@ -257,7 +264,8 @@ model PurchaseItem {
 // Invoice: A wholesale sale transaction to customer
 // ─────────────────────────────────────────────
 model Invoice {
-  id                 String    @id @default(uuid())
+  id              String   @id @default(uuid())
+  userId          String?
   invoiceNo          String    @unique
   customerId         String
   customer           Customer  @relation(fields: [customerId], references: [id])

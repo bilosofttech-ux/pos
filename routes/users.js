@@ -108,20 +108,133 @@ router.post('/wipe-all-data', async (req, res) => {
   }
 });
 
-// POST /api/users/login - Authenticate user account
+// POST /api/users/register - Register a new user account with isolated tenant workspace
+router.post('/register', async (req, res) => {
+  try {
+    const { fullName, email, password, username, businessName, businessType } = req.body;
+
+    if (!fullName || !email || !password) {
+      return res.status(400).json({ error: 'Full Name, Email, and Password are required.' });
+    }
+
+    const cleanEmail = String(email).toLowerCase().trim();
+    const cleanPassword = String(password).trim();
+    let cleanUsername = username
+      ? String(username).toLowerCase().trim()
+      : cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '');
+
+    if (!cleanUsername) cleanUsername = 'user_' + Math.floor(1000 + Math.random() * 9000);
+
+    // Check if email or username already taken
+    const existing = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: cleanEmail },
+          { username: cleanUsername },
+        ],
+      },
+    });
+
+    if (existing) {
+      if (existing.email && existing.email.toLowerCase() === cleanEmail) {
+        return res.status(400).json({ error: 'An account with this email address already exists. Please log in.' });
+      }
+      cleanUsername = `${cleanUsername}_${Math.floor(100 + Math.random() * 900)}`;
+    }
+
+    const newUser = await prisma.user.create({
+      data: {
+        fullName: fullName.trim(),
+        email: cleanEmail,
+        username: cleanUsername,
+        password: cleanPassword,
+        role: 'Admin',
+        isActive: true,
+        authProvider: 'email',
+        salary: 0,
+        commissionRate: 0,
+        overtimeRate: 0,
+        permissions: {
+          create: ERP_MODULES.map((mod) => ({
+            module: mod,
+            canCreate: true,
+            canEdit: true,
+            canDelete: true,
+            canView: true,
+            canApprove: true,
+            canPrint: true,
+            canExport: true,
+          })),
+        },
+      },
+      include: {
+        branch: true,
+        permissions: true,
+      },
+    });
+
+    // Create default vendor and counter-sale customer for this user workspace
+    try {
+      await prisma.vendor.create({
+        data: {
+          vendorNo: Math.floor(1000 + Math.random() * 8999),
+          name: `${businessName ? businessName.trim() : 'Direct Supplier'} (Main)`,
+          area: 'Wholesale Market',
+          contactNo: 'N/A',
+          userId: newUser.id,
+        },
+      });
+      await prisma.customer.create({
+        data: {
+          accountNo: Math.floor(1000 + Math.random() * 8999),
+          name: 'Walk-in / Counter Customer',
+          address: 'Store Counter',
+          contactNo: 'N/A',
+          customerType: 'Retailer',
+          userId: newUser.id,
+        },
+      });
+    } catch (e) {
+      console.warn('Initial vendor/customer setup note:', e.message);
+    }
+
+    res.status(201).json({
+      id: newUser.id,
+      username: newUser.username,
+      fullName: newUser.fullName,
+      email: newUser.email,
+      role: newUser.role,
+      branch: newUser.branch,
+      permissions: newUser.permissions,
+      authProvider: newUser.authProvider,
+      message: 'Account created successfully!',
+    });
+  } catch (err) {
+    console.error('Error registering user:', err);
+    res.status(500).json({ error: err.message || 'Registration failed' });
+  }
+});
+
+// POST /api/users/login - Authenticate user account with Email or Username
 router.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and Password are required' });
+    const { username, email, password } = req.body;
+    const identifier = username || email;
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'Username/Email and Password are required' });
     }
 
     await ensureSeedUsers();
-    const cleanUsername = String(username).toLowerCase().trim();
+    const cleanId = String(identifier).toLowerCase().trim();
     const cleanPassword = String(password).trim();
 
     let user = await prisma.user.findFirst({
-      where: { username: cleanUsername },
+      where: {
+        OR: [
+          { username: cleanId },
+          { email: cleanId },
+        ],
+      },
       include: { branch: true, permissions: true },
     });
 
@@ -129,11 +242,15 @@ router.post('/login', async (req, res) => {
       const allUsers = await prisma.user.findMany({
         include: { branch: true, permissions: true },
       });
-      user = allUsers.find((u) => u.username && u.username.toLowerCase().trim() === cleanUsername);
+      user = allUsers.find(
+        (u) =>
+          (u.username && u.username.toLowerCase().trim() === cleanId) ||
+          (u.email && u.email.toLowerCase().trim() === cleanId)
+      );
     }
 
     // Emergency auto-healing fallback for admin account
-    if (!user && cleanUsername === 'admin' && cleanPassword === 'admin') {
+    if (!user && cleanId === 'admin' && cleanPassword === 'admin') {
       try {
         user = await prisma.user.create({
           data: {
@@ -163,17 +280,11 @@ router.post('/login', async (req, res) => {
     }
 
     if (!user.isActive) {
-      // Auto-reactivate default system accounts if disabled
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { isActive: true },
-      });
-      user.isActive = true;
+      return res.status(403).json({ error: 'Account disabled. Please contact administrator.' });
     }
 
     if (user.password.trim() !== cleanPassword) {
-      if (cleanUsername === 'admin' && cleanPassword === 'admin') {
-        // Force reset admin password to 'admin'
+      if (cleanId === 'admin' && cleanPassword === 'admin') {
         await prisma.user.update({
           where: { id: user.id },
           data: { password: 'admin', isActive: true },
@@ -192,10 +303,246 @@ router.post('/login', async (req, res) => {
       role: user.role,
       branch: user.branch,
       permissions: user.permissions,
+      authProvider: user.authProvider || 'email',
+      avatarUrl: user.avatarUrl,
     });
   } catch (err) {
     console.error('Error in user login:', err);
     res.status(500).json({ error: 'Login failed on server' });
+  }
+});
+
+// POST /api/users/google-login - One-click persistent Google authentication
+router.post('/google-login', async (req, res) => {
+  try {
+    const { email, fullName, googleId, avatarUrl } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Google email is required' });
+    }
+
+    const cleanEmail = String(email).toLowerCase().trim();
+    let user = await prisma.user.findFirst({
+      where: { email: cleanEmail },
+      include: { branch: true, permissions: true },
+    });
+
+    if (!user) {
+      let cleanUsername = cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '');
+      const existingUsername = await prisma.user.findUnique({ where: { username: cleanUsername } });
+      if (existingUsername) {
+        cleanUsername = `${cleanUsername}_${Math.floor(100 + Math.random() * 900)}`;
+      }
+
+      user = await prisma.user.create({
+        data: {
+          fullName: fullName ? fullName.trim() : cleanEmail.split('@')[0],
+          email: cleanEmail,
+          username: cleanUsername,
+          password: 'google_oauth_' + Math.random().toString(36).substring(2),
+          role: 'Admin',
+          authProvider: 'google',
+          avatarUrl: avatarUrl || null,
+          isActive: true,
+          permissions: {
+            create: ERP_MODULES.map((mod) => ({
+              module: mod,
+              canCreate: true, canEdit: true, canDelete: true, canView: true,
+              canApprove: true, canPrint: true, canExport: true,
+            })),
+          },
+        },
+        include: { branch: true, permissions: true },
+      });
+
+      try {
+        await prisma.vendor.create({
+          data: {
+            vendorNo: Math.floor(1000 + Math.random() * 8999),
+            name: 'Direct Supplier (Main)',
+            area: 'Wholesale Market',
+            contactNo: 'N/A',
+            userId: user.id,
+          },
+        });
+        await prisma.customer.create({
+          data: {
+            accountNo: Math.floor(1000 + Math.random() * 8999),
+            name: 'Walk-in Customer',
+            address: 'Store Counter',
+            contactNo: 'N/A',
+            customerType: 'Retailer',
+            userId: user.id,
+          },
+        });
+      } catch (e) {}
+    } else {
+      if (avatarUrl && user.avatarUrl !== avatarUrl) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { avatarUrl },
+          include: { branch: true, permissions: true },
+        });
+      }
+    }
+
+    res.json({
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+      branch: user.branch,
+      permissions: user.permissions,
+      authProvider: user.authProvider || 'google',
+      avatarUrl: user.avatarUrl,
+    });
+  } catch (err) {
+    console.error('Error in Google login:', err);
+    res.status(500).json({ error: 'Google authentication failed' });
+  }
+});
+
+// POST /api/users/forgot-password - Generate password reset OTP code
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email address is required' });
+    }
+
+    const cleanEmail = String(email).toLowerCase().trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: cleanEmail },
+          { username: cleanEmail },
+        ],
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'No account registered with this email or username.' });
+    }
+
+    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const resetExpires = new Date(Date.now() + 15 * 60 * 1000);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetToken: resetCode,
+        resetTokenExpires: resetExpires,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Password reset verification code generated.',
+      email: user.email || cleanEmail,
+      code: resetCode,
+    });
+  } catch (err) {
+    console.error('Error in forgot-password:', err);
+    res.status(500).json({ error: 'Failed to process password reset request' });
+  }
+});
+
+// POST /api/users/reset-password - Verify OTP and update password
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body;
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ error: 'Email, Verification Code, and New Password are required.' });
+    }
+
+    const cleanEmail = String(email).toLowerCase().trim();
+    const cleanCode = String(code).trim();
+    const cleanPassword = String(newPassword).trim();
+
+    if (cleanPassword.length < 4) {
+      return res.status(400).json({ error: 'New password must be at least 4 characters.' });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: cleanEmail },
+          { username: cleanEmail },
+        ],
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    if (!user.resetToken || user.resetToken.trim() !== cleanCode) {
+      return res.status(400).json({ error: 'Invalid verification code. Please check and try again.' });
+    }
+
+    if (user.resetTokenExpires && new Date(user.resetTokenExpires) < new Date()) {
+      return res.status(400).json({ error: 'Verification code has expired. Please request a new code.' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: cleanPassword,
+        resetToken: null,
+        resetTokenExpires: null,
+      },
+      include: { branch: true, permissions: true },
+    });
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully! You can now log in with your new password.',
+      user: {
+        id: updatedUser.id,
+        username: updatedUser.username,
+        fullName: updatedUser.fullName,
+        email: updatedUser.email,
+        role: updatedUser.role,
+      },
+    });
+  } catch (err) {
+    console.error('Error in reset-password:', err);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// POST /api/users/change-password - Change password for authenticated session
+router.post('/change-password', async (req, res) => {
+  try {
+    const { userId, currentPassword, newPassword } = req.body;
+    const targetUserId = userId || req.headers['x-user-id'];
+
+    if (!targetUserId || !currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current Password and New Password are required.' });
+    }
+
+    if (String(newPassword).trim().length < 4) {
+      return res.status(400).json({ error: 'New password must be at least 4 characters.' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    if (user.password.trim() !== String(currentPassword).trim()) {
+      return res.status(401).json({ error: 'Current password does not match.' });
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: String(newPassword).trim() },
+    });
+
+    res.json({ success: true, message: 'Password changed successfully!' });
+  } catch (err) {
+    console.error('Error in change-password:', err);
+    res.status(500).json({ error: 'Failed to update password' });
   }
 });
 

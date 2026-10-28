@@ -62,6 +62,25 @@ app.use('/api/orders', require('./routes/orders'));
 // Phase 14 Route: Offline-First Mobile & Tablet Database Synchronization
 app.use('/api/sync', require('./routes/sync'));
 
+// Desktop App Installer & Portable Offline Downloads (100% Offline Mode)
+app.get('/api/download/desktop-app', (req, res) => {
+  const filePath = path.join(__dirname, '..', 'Desktop app', 'dist_installer', 'POS Desktop Application Setup 1.0.1.exe');
+  if (fs.existsSync(filePath)) {
+    res.download(filePath, 'CloudPOS-Desktop-Offline-Setup.exe');
+  } else {
+    res.status(404).json({ error: 'Desktop installer file not found on server' });
+  }
+});
+
+app.get('/api/download/desktop-app-portable', (req, res) => {
+  const filePath = path.join(__dirname, '..', 'Desktop app', 'dist_installer', 'POS Desktop Application Portable.exe');
+  if (fs.existsSync(filePath)) {
+    res.download(filePath, 'CloudPOS-Desktop-Portable.exe');
+  } else {
+    res.status(404).json({ error: 'Desktop portable file not found on server' });
+  }
+});
+
 // Serve static frontend build if present in ./public
 const publicPath = path.join(__dirname, 'public');
 if (fs.existsSync(publicPath)) {
