@@ -7,7 +7,16 @@ let inMemorySales = [];
 // GET /api/sales - List sales (invoices)
 router.get('/', async (req, res, next) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const where = {};
+    if (userId && userRole !== 'SuperAdmin') {
+      where.userId = userId;
+    } else if (!userId) {
+      return res.json([]);
+    }
     const invoices = await prisma.invoice.findMany({
+      where,
       include: {
         customer: true,
         items: { include: { product: true } },
@@ -85,9 +94,11 @@ router.post('/', async (req, res, next) => {
           });
         }
 
+        const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
         const invoiceNo = String(Date.now());
         return await tx.invoice.create({
           data: {
+            userId: currentTenantUserId,
             invoiceNo,
             totalAmount: total,
             customerId: targetCustomerId,

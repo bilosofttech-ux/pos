@@ -5,7 +5,12 @@ const prisma = require('../lib/prisma');
 // GET /api/inventory/alerts - Retrieve Expiry & Stock Level Alerts
 router.get('/alerts', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const where = {};
+    if (userId) where.userId = userId;
+    else return res.json({ counts: { expiredCount: 0, nearExpiry30Count: 0, nearExpiry60Count: 0, outOfStockCount: 0, lowStockCount: 0, totalProducts: 0 }, expired: [], nearExpiry30: [], nearExpiry60: [], outOfStock: [], lowStock: [] });
     const products = await prisma.product.findMany({
+      where,
       include: { vendor: true },
       orderBy: { name: 'asc' },
     });
@@ -68,7 +73,11 @@ router.get('/alerts', async (req, res) => {
 // GET /api/inventory/valuation - Total Stock Financial Valuation
 router.get('/valuation', async (req, res) => {
   try {
-    const products = await prisma.product.findMany();
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const where = {};
+    if (userId) where.userId = userId;
+    else return res.json({ totalStockUnits: 0, totalCostValuation: 0, totalTradeValuation: 0, totalRetailValuation: 0, estimatedProfitMargin: 0 });
+    const products = await prisma.product.findMany({ where });
 
     let totalCostValuation = 0;
     let totalRetailValuation = 0;
@@ -99,7 +108,11 @@ router.get('/valuation', async (req, res) => {
 // GET /api/inventory/adjustments - History log of stock adjustments
 router.get('/adjustments', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const where = {};
+    if (userId) where.userId = userId;
     const logs = await prisma.stockAdjustment.findMany({
+      where,
       include: { product: true },
       orderBy: { createdAt: 'desc' },
       take: 100,
@@ -174,7 +187,7 @@ router.get('/expiry-analysis', async (req, res) => {
     const { company } = req.query;
     const where = {};
     if (company && company !== 'ALL' && company !== 'All Companies') {
-      where.companyName = { contains: company, mode: 'insensitive' };
+      where.companyName = { contains: company };
     }
 
     const products = await prisma.product.findMany({

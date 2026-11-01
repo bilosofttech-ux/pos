@@ -2,44 +2,54 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 
-// GET /api/company - Retrieve Company Profile & Branches
+// GET /api/company - Retrieve Company Profile & Branches for current authenticated user
 router.get('/', async (req, res) => {
   try {
-    let company = await prisma.company.findFirst({
-      include: { branches: true },
-    });
+    const userId = req.headers['x-user-id'] || req.query.userId || null;
+    let company = null;
 
-    // Seed default company profile if empty
+    if (userId) {
+      company = await prisma.company.findFirst({
+        where: { userId },
+        include: { branches: true },
+      });
+    }
+
     if (!company) {
+      company = await prisma.company.findFirst({
+        where: { userId: null },
+        include: { branches: true },
+      });
+    }
+
+    // Seed dedicated tenant company profile if missing
+    if (!company) {
+      let storeName = 'My Store & Pharmacy';
+      let storeEmail = 'info@store.com';
+
+      if (userId) {
+        const u = await prisma.user.findUnique({ where: { id: userId } }).catch(() => null);
+        if (u) {
+          storeName = `${u.fullName}'s Pharmacy`;
+          storeEmail = u.email || storeEmail;
+        }
+      }
+
       company = await prisma.company.create({
         data: {
-          name: 'Pharmacare Wholesale & ERP',
-          tagline: 'Leading Pharmaceutical Distributors',
-          address: 'Shaheen Plaza, Main Wholesale Medicine Market',
+          userId: userId || null,
+          name: storeName,
+          tagline: 'Leading Retail & Wholesale Solutions',
+          address: 'Main Shop / Counter',
           city: 'Karachi',
           country: 'Pakistan',
-          phone: '+92 21 34567890',
-          email: 'info@pharmacareerp.com',
-          ntnTaxNo: 'NTN-8923411-9',
-          drugLicenseNo: 'DL-KHI-2026-99',
-          logoUrl: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=200&auto=format&fit=crop&q=80',
+          phone: '+92 300 0000000',
+          email: storeEmail,
           currency: 'PKR',
           currencySymbol: 'Rs.',
           defaultTaxRate: 0.0,
           fiscalYearStart: new Date('2026-07-01'),
           fiscalYearEnd: new Date('2027-06-30'),
-          branches: {
-            create: [
-              {
-                branchCode: 'MAIN-01',
-                name: 'Head Office & Main Warehouse',
-                city: 'Karachi',
-                address: 'Main Wholesale Medicine Market',
-                phone: '+92 300 1234567',
-                isMain: true,
-              },
-            ],
-          },
         },
         include: { branches: true },
       });
@@ -52,9 +62,10 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/company - Update Company Profile Settings
+// POST /api/company - Update Company Profile Settings for current user workspace
 router.post('/', async (req, res) => {
   try {
+    const userId = req.body.userId || req.headers['x-user-id'] || null;
     const {
       id,
       name,
@@ -75,12 +86,12 @@ router.post('/', async (req, res) => {
     } = req.body;
 
     const data = {
-      name: name || 'Pharmacare Wholesale & ERP',
+      name: name || 'My Pharmacy & Store',
       tagline,
-      address,
+      address: address || 'Main Shop / Counter',
       city: city || 'Karachi',
       country: country || 'Pakistan',
-      phone,
+      phone: phone || '+92 300 0000000',
       email,
       ntnTaxNo,
       drugLicenseNo,
@@ -92,16 +103,30 @@ router.post('/', async (req, res) => {
       fiscalYearEnd: fiscalYearEnd ? new Date(fiscalYearEnd) : new Date('2027-06-30'),
     };
 
-    let updated;
+    let targetCompany = null;
     if (id) {
+      targetCompany = await prisma.company.findUnique({ where: { id } }).catch(() => null);
+    }
+    if (!targetCompany && userId) {
+      targetCompany = await prisma.company.findFirst({ where: { userId } }).catch(() => null);
+    }
+
+    let updated;
+    if (targetCompany) {
       updated = await prisma.company.update({
-        where: { id },
-        data,
+        where: { id: targetCompany.id },
+        data: {
+          ...data,
+          userId: targetCompany.userId || userId,
+        },
         include: { branches: true },
       });
     } else {
       updated = await prisma.company.create({
-        data,
+        data: {
+          ...data,
+          userId,
+        },
         include: { branches: true },
       });
     }
@@ -147,12 +172,7 @@ router.delete('/branches/:id', async (req, res) => {
     const { id } = req.params;
 
     const branch = await prisma.branch.findFirst({
-      where: {
-        OR: [
-          { id: id },
-          { branchCode: id },
-        ],
-      },
+      where: { id },
     });
 
     if (!branch) {
@@ -160,23 +180,14 @@ router.delete('/branches/:id', async (req, res) => {
     }
 
     if (branch.isMain) {
-      return res.status(400).json({ error: 'Cannot delete the Main Head Office branch.' });
+      return res.status(400).json({ error: 'Main branch cannot be deleted' });
     }
 
-    // Unlink any users assigned to this branch
-    await prisma.user.updateMany({
-      where: { branchId: branch.id },
-      data: { branchId: null },
-    });
-
-    await prisma.branch.delete({
-      where: { id: branch.id },
-    });
-
-    res.json({ message: 'Branch deleted successfully', id: branch.id, branchCode: branch.branchCode });
+    await prisma.branch.delete({ where: { id } });
+    res.json({ success: true, message: 'Branch deleted successfully' });
   } catch (err) {
     console.error('Error deleting branch:', err);
-    res.status(500).json({ error: 'Failed to delete store branch' });
+    res.status(500).json({ error: 'Failed to delete branch' });
   }
 });
 

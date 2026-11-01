@@ -37,13 +37,17 @@ router.get('/', async (req, res) => {
     }
 
     if (company && company !== 'All') {
-      where.companyName = { contains: company, mode: 'insensitive' };
+      where.companyName = { contains: company };
     }
 
     const userId = req.headers['x-user-id'] || req.query.userId;
     const userRole = req.headers['x-user-role'];
     if (userId && userRole !== 'SuperAdmin') {
       where.userId = userId;
+    } else if (!userId) {
+      return res.json([]);
+    } else if (!userId) {
+      return res.json([]);
     }
 
     const products = await prisma.product.findMany({
@@ -178,7 +182,9 @@ router.get('/:id/batches', async (req, res) => {
 // GET /api/products/meta/companies - Retrieve distinct pharmaceutical manufacturer companies
 router.get('/meta/companies', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
     const products = await prisma.product.findMany({
+      where: userId ? { userId } : {},
       select: {
         id: true,
         companyName: true,
@@ -373,6 +379,7 @@ router.get('/:id', async (req, res) => {
 router.post('/bulk-import', async (req, res) => {
   try {
     const { products: rawProducts, updateExisting = true, defaultCategory = 'Tablets', defaultUnit = 'Box' } = req.body;
+    const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
 
     const items = Array.isArray(rawProducts) ? rawProducts : (Array.isArray(req.body) ? req.body : []);
 
@@ -381,15 +388,18 @@ router.post('/bulk-import', async (req, res) => {
     }
 
     // 1. Resolve or create default vendor
-    let defaultVendor = await prisma.vendor.findFirst();
+    let defaultVendor = await prisma.vendor.findFirst({
+      where: currentTenantUserId ? { userId: currentTenantUserId } : {},
+    });
     if (!defaultVendor) {
       defaultVendor = await prisma.vendor.create({
-        data: { name: 'General Pharma Distributor', area: 'Main Market', contactNo: '+92 300 0000000' },
+        data: { vendorNo: Math.floor(1000 + Math.random() * 8999), name: 'General Pharma Distributor', area: 'Main Market', contactNo: '+92 300 0000000', userId: currentTenantUserId },
       });
     }
 
     // 2. Fetch existing products for code/barcode collision check
     const existingProducts = await prisma.product.findMany({
+      where: currentTenantUserId ? { userId: currentTenantUserId } : {},
       select: { id: true, productCode: true, barcode: true, name: true, stockQuantity: true },
     });
 
@@ -544,6 +554,7 @@ router.post('/bulk-import', async (req, res) => {
 
         const created = await prisma.product.create({
           data: {
+            userId: currentTenantUserId,
             productCode: code,
             name,
             genericName,

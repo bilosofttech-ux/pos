@@ -30,10 +30,9 @@ router.get('/', async (req, res, next) => {
     const userRole = req.headers['x-user-role'];
     const where = {};
     if (userId && userRole !== 'SuperAdmin') {
-      where.OR = [
-        { userId: userId },
-        { accountNo: 1 },
-      ];
+      where.userId = userId;
+    } else if (!userId) {
+      return res.json([]);
     }
     const customers = await prisma.customer.findMany({
       where,
@@ -92,8 +91,10 @@ router.post('/', async (req, res, next) => {
       }
     }
 
+    const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
     const newCustomer = await prisma.customer.create({
       data: {
+        userId: currentTenantUserId,
         accountNo: Number(parsedAccountNo),
         name: String(name),
         address: String(address),

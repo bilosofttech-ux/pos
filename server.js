@@ -27,6 +27,64 @@ app.get(['/health', '/api/health'], async (req, res) => {
   }
 });
 
+
+// Anti-Tamper 30-Day Free Trial & Commercial License Enforcement Middleware
+const checkTrialAndLicenseMiddleware = async (req, res, next) => {
+  const reqPath = req.path || '';
+  if (
+    reqPath === '/health' ||
+    reqPath === '/api/health' ||
+    reqPath.startsWith('/users/login') ||
+    reqPath.startsWith('/users/register') ||
+    reqPath.startsWith('/users/google-login') ||
+    reqPath.startsWith('/users/forgot-password') ||
+    reqPath.startsWith('/users/reset-password') ||
+    reqPath.startsWith('/users/trial-status') ||
+    reqPath.startsWith('/users/license/activate')
+  ) {
+    return next();
+  }
+
+  const tenantUserId = req.headers['x-user-id'] || req.body?.userId || req.query?.userId;
+  if (!tenantUserId) {
+    return next();
+  }
+
+  try {
+    const tenantUser = await prisma.user.findUnique({
+      where: { id: String(tenantUserId) },
+      select: { id: true, role: true, isLicensed: true, createdAt: true, licenseType: true },
+    });
+
+    if (!tenantUser) {
+      return next();
+    }
+
+    if (tenantUser.isLicensed || tenantUser.role === 'SuperAdmin') {
+      return next();
+    }
+
+    const now = Date.now();
+    const createdMs = new Date(tenantUser.createdAt).getTime();
+    const elapsedDays = Math.floor((now - createdMs) / (1000 * 60 * 60 * 24));
+
+    if (elapsedDays >= 30) {
+      return res.status(403).json({
+        error: 'Trial Expired',
+        trialExpired: true,
+        daysRemaining: 0,
+        message: 'Your 30-day free trial has expired. Access to POS & ERP modules is locked. Please activate a commercial license to continue.',
+      });
+    }
+
+    next();
+  } catch (err) {
+    next();
+  }
+};
+
+app.use('/api', checkTrialAndLicenseMiddleware);
+
 // API Routes
 app.use('/api/categories', require('./routes/categories'));
 app.use('/api/products', require('./routes/products'));
@@ -133,8 +191,8 @@ server.on('error', (err) => {
 });
 
 prisma.$connect()
-  .then(() => console.log('✅ Connected to live PostgreSQL Database via Prisma Client.'))
-  .catch((error) => console.warn('⚠️ PostgreSQL connection failed:', error.message));
+  .then(() => console.log('✅ Connected to live MariaDB / MySQL Database via Prisma Client.'))
+  .catch((error) => console.warn('⚠️ MariaDB / MySQL connection failed:', error.message));
 
 // Graceful Shutdown Handlers
 process.on('SIGINT', async () => {

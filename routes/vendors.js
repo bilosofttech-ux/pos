@@ -36,10 +36,9 @@ router.get('/', async (req, res, next) => {
     const userRole = req.headers['x-user-role'];
     const where = {};
     if (userId && userRole !== 'SuperAdmin') {
-      where.OR = [
-        { userId: userId },
-        { vendorNo: 1 },
-      ];
+      where.userId = userId;
+    } else if (!userId) {
+      return res.json([]);
     }
     const vendors = await prisma.vendor.findMany({
       where,
@@ -83,8 +82,10 @@ router.post('/', async (req, res, next) => {
       }
     }
 
+    const currentTenantUserId = req.body.userId || req.headers['x-user-id'] || null;
     const newVendor = await prisma.vendor.create({
       data: {
+        userId: currentTenantUserId,
         vendorNo: Number(parsedVendorNo),
         name: String(name),
         area: String(area),

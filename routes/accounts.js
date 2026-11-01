@@ -13,7 +13,9 @@ function getDaysDiff(d1, d2 = new Date()) {
 // GET /expenses - Fetch all operational expenses & salary disbursements
 router.get('/expenses', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
     const transactions = await prisma.accountTransaction.findMany({
+      where: { transactionType: 'Expense', ...(userId ? { userId } : {}) },
       where: {
         transactionType: 'Expense',
       },

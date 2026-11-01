@@ -14,6 +14,10 @@ router.get('/', async (req, res, next) => {
     const where = {};
     if (userId && userRole !== 'SuperAdmin') {
       where.userId = userId;
+    } else if (!userId) {
+      return res.json([]);
+    } else if (!userId) {
+      return res.json([]);
     }
 
     if (search) {
@@ -38,7 +42,7 @@ router.get('/', async (req, res, next) => {
         orderBy: { createdAt: 'desc' },
       }),
       prisma.accountTransaction.findMany({
-        where: { partyType: 'Customer' },
+        where: { partyType: 'Customer', ...(userId ? { userId } : {}) },
       }),
     ]);
 

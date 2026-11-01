@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { verifyLicenseKey, generateLicenseKey } = require('../lib/license');
 const crypto = require('crypto');
 
 function hashPassword(password) {
@@ -49,38 +50,7 @@ const ERP_MODULES = [
 
 // Helper: Ensure default admin account exists only on initial empty DB
 async function ensureSeedUsers() {
-  try {
-    const totalUsers = await prisma.user.count();
-    if (totalUsers > 0) {
-      // Users exist in DB; do NOT recreate deleted accounts!
-      return;
-    }
-
-    const mainBranch = await prisma.branch.findFirst({ where: { isMain: true } });
-    const branchId = mainBranch ? mainBranch.id : null;
-
-    // Seed default root admin account on first initialization
-    await prisma.user.create({
-      data: {
-        username: 'admin',
-        fullName: 'System Administrator',
-        email: 'admin@pharmacareerp.com',
-        password: 'admin',
-        role: 'Admin',
-        isActive: true,
-        branchId,
-        permissions: {
-          create: ERP_MODULES.map((mod) => ({
-            module: mod,
-            canCreate: true, canEdit: true, canDelete: true, canView: true,
-            canApprove: true, canPrint: true, canExport: true,
-          })),
-        },
-      },
-    });
-  } catch (err) {
-    console.error('Error in ensureSeedUsers:', err);
-  }
+  return;
 }
 
 // GET /api/users - List all users & seed default Admin, Cashier, Salesman if missing
@@ -141,6 +111,19 @@ router.post('/register', async (req, res) => {
 
     const cleanEmail = String(email).toLowerCase().trim();
     const cleanPassword = String(password).trim();
+
+    if (cleanPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+    }
+    if (!/[A-Z]/.test(cleanPassword)) {
+      return res.status(400).json({ error: 'Password must contain at least one uppercase letter (A-Z).' });
+    }
+    if (!/[0-9]/.test(cleanPassword)) {
+      return res.status(400).json({ error: 'Password must contain at least one number (0-9).' });
+    }
+    if (!/[^A-Za-z0-9]/.test(cleanPassword)) {
+      return res.status(400).json({ error: 'Password must contain at least one special symbol (!@#$%^&* etc.).' });
+    }
     let cleanUsername = username
       ? String(username).toLowerCase().trim()
       : cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '');
@@ -216,6 +199,21 @@ router.post('/register', async (req, res) => {
           userId: newUser.id,
         },
       });
+      await prisma.company.create({
+        data: {
+          userId: newUser.id,
+          name: businessName ? businessName.trim() : (fullName.trim() + "'s Store"),
+          tagline: 'Leading Retail & Wholesale Solutions',
+          address: 'Store Counter / Main Branch',
+          city: 'Karachi',
+          country: 'Pakistan',
+          phone: '+92 300 0000000',
+          email: cleanEmail,
+          currency: 'PKR',
+          currencySymbol: 'Rs.',
+          defaultTaxRate: 0.0,
+        },
+      });
     } catch (e) {
       console.warn('Initial vendor/customer setup note:', e.message);
     }
@@ -271,32 +269,6 @@ router.post('/login', async (req, res) => {
       );
     }
 
-    // Emergency auto-healing fallback for admin account
-    if (!user && cleanId === 'admin' && cleanPassword === 'admin') {
-      try {
-        user = await prisma.user.create({
-          data: {
-            username: 'admin',
-            fullName: 'System Administrator',
-            email: 'admin@pharmacareerp.com',
-            password: 'admin',
-            role: 'Admin',
-            isActive: true,
-            permissions: {
-              create: ERP_MODULES.map((mod) => ({
-                module: mod,
-                canCreate: true, canEdit: true, canDelete: true, canView: true,
-                canApprove: true, canPrint: true, canExport: true,
-              })),
-            },
-          },
-          include: { branch: true, permissions: true },
-        });
-      } catch (e) {
-        console.error('Failed to emergency create admin:', e);
-      }
-    }
-
     if (!user) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
@@ -307,16 +279,7 @@ router.post('/login', async (req, res) => {
 
     const isPasswordValid = verifyPassword(cleanPassword, user.password.trim());
     if (!isPasswordValid) {
-      if (cleanId === 'admin' && cleanPassword === 'admin') {
-        const hashedAdmin = hashPassword('admin');
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { password: hashedAdmin, isActive: true },
-        });
-        user.password = hashedAdmin;
-      } else {
-        return res.status(401).json({ error: 'Invalid username or password' });
-      }
+      return res.status(401).json({ error: 'Invalid username or password' });
     } else if (!user.password.startsWith('scrypt:')) {
       // Auto upgrade plain text to scrypt
       await prisma.user.update({
@@ -334,6 +297,9 @@ router.post('/login', async (req, res) => {
       branch: user.branch,
       permissions: user.permissions,
       authProvider: user.authProvider || 'email',
+      isLicensed: Boolean(user.isLicensed || user.role === 'SuperAdmin'),
+      licenseType: user.licenseType || (user.isLicensed ? 'Commercial' : 'Trial'),
+      createdAt: user.createdAt,
       avatarUrl: user.avatarUrl,
     });
   } catch (err) {
@@ -402,6 +368,21 @@ router.post('/google-login', async (req, res) => {
             contactNo: 'N/A',
             customerType: 'Retailer',
             userId: user.id,
+          },
+        });
+        await prisma.company.create({
+          data: {
+            userId: user.id,
+            name: (user.fullName ? user.fullName.trim() : 'My') + ' Pharmacy / Store',
+            tagline: 'Leading Retail & Wholesale Solutions',
+            address: 'Store Counter / Main Branch',
+            city: 'Karachi',
+            country: 'Pakistan',
+            phone: '+92 300 0000000',
+            email: cleanEmail,
+            currency: 'PKR',
+            currencySymbol: 'Rs.',
+            defaultTaxRate: 0.0,
           },
         });
       } catch (e) {}
@@ -772,7 +753,7 @@ router.get('/:id/sales-report', async (req, res) => {
     const allInvoices = await prisma.invoice.findMany({
       where: {
         OR: searchTerms.map((t) => ({
-          salesman: { contains: t, mode: 'insensitive' },
+          salesman: { contains: t },
         })),
       },
       include: {
@@ -957,4 +938,105 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+
+// GET /api/users/trial-status - Authoritative server-verified trial countdown
+router.get('/trial-status', async (req, res) => {
+  try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, fullName: true, email: true, role: true, isLicensed: true, licenseKey: true, licenseType: true, createdAt: true }
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const now = Date.now();
+    const createdMs = new Date(user.createdAt).getTime();
+    const elapsedDays = Math.floor((now - createdMs) / (1000 * 60 * 60 * 24));
+    const isLicensed = Boolean(user.isLicensed || user.role === 'SuperAdmin');
+    const daysRemaining = isLicensed ? 999 : Math.max(0, 30 - elapsedDays);
+    const isExpired = !isLicensed && elapsedDays >= 30;
+
+    return res.json({
+      userId: user.id,
+      serverTime: new Date().toISOString(),
+      createdAt: user.createdAt,
+      elapsedDays,
+      daysRemaining,
+      isExpired,
+      isLicensed,
+      licenseType: user.licenseType || (isLicensed ? 'Commercial' : 'Trial')
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/users/license/activate - Cryptographically authenticate and activate commercial license
+router.post('/license/activate', async (req, res) => {
+  try {
+    const { licenseKey, userId } = req.body;
+    const targetUserId = userId || req.headers['x-user-id'];
+
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'User account ID is required for activation.' });
+    }
+    if (!licenseKey || typeof licenseKey !== 'string') {
+      return res.status(400).json({ error: 'License key is required.' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    const verification = verifyLicenseKey(licenseKey, user);
+    if (!verification.valid) {
+      return res.status(400).json({ error: verification.error || 'Invalid or unverified license key.' });
+    }
+
+    const cleanKey = licenseKey.trim().toUpperCase();
+    const updated = await prisma.user.update({
+      where: { id: targetUserId },
+      data: {
+        isLicensed: true,
+        licenseKey: cleanKey,
+        licenseType: verification.tier || 'LIFETIME'
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: 'License Key verified and activated successfully! Full lifetime access unlocked.',
+      user: {
+        id: updated.id,
+        username: updated.username,
+        email: updated.email,
+        isLicensed: true,
+        licenseType: updated.licenseType
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/users/license/generate - Admin utility to generate genuine keys
+router.post('/license/generate', async (req, res) => {
+  try {
+    const { userId, email, tier, adminKey } = req.body;
+    if (adminKey !== 'BilalAdmin2026MasterKey@') {
+      return res.status(403).json({ error: 'Unauthorized key generation' });
+    }
+    const key = generateLicenseKey(userId, email, tier || 'LIFETIME');
+    return res.json({ licenseKey: key, tier: tier || 'LIFETIME' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
+

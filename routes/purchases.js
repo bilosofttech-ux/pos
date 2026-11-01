@@ -119,7 +119,7 @@ router.get('/last-item-purchase', async (req, res) => {
       } else if (pCode) {
         itemWhere.product = { productCode: String(pCode) };
       } else if (pName) {
-        itemWhere.product = { name: { contains: pName, mode: 'insensitive' } };
+        itemWhere.product = { name: { contains: pName } };
       }
 
       // First attempt: look for purchase from specific vendor if provided
@@ -127,7 +127,7 @@ router.get('/last-item-purchase', async (req, res) => {
         const vendWhere = {};
         if (vendorId) vendWhere.id = vendorId;
         else if (vNo && !isNaN(Number(vNo))) vendWhere.vendorNo = Number(vNo);
-        else if (vName) vendWhere.name = { contains: vName, mode: 'insensitive' };
+        else if (vName) vendWhere.name = { contains: vName };
 
         const foundWithVendor = await prisma.purchase.findFirst({
           where: {
@@ -298,7 +298,7 @@ router.post('/', async (req, res, next) => {
       }
       if (!targetVendorId && resolvedVendName && resolvedVendName.toLowerCase() !== 'general vendor') {
         const vendByName = await prisma.vendor.findFirst({
-          where: { name: { equals: resolvedVendName, mode: 'insensitive' } },
+          where: { name: { equals: resolvedVendName } },
         });
         if (vendByName) targetVendorId = vendByName.id;
       }
@@ -330,10 +330,11 @@ router.post('/', async (req, res, next) => {
       if (!prod && codeStr) {
         prod = await prisma.product.findFirst({ where: { productCode: codeStr } });
       }
-      const itemQty = parseInt(item.qty1 || '1', 10);
-      const itemBon = parseInt(item.bon || '0', 10);
-      const itemNet = parseFloat(item.net || '0');
-      const itemStp = parseFloat(item.stp || '0');
+      const itemQty = parseInt(item.qty1 || item.quantity || '1', 10);
+      const itemBon = parseInt(item.bon || item.bonus || '0', 10);
+      const itemNet = parseFloat(item.net || item.netAmount || '0');
+      const itemStp = parseFloat(item.stp || item.purchasePrice || '0');
+      const itemExDisc = parseFloat(item.exDisc || item.extraDisc || '0');
       const totalUnitsReceived = itemQty + itemBon;
       const unitCost = itemNet > 0 && totalUnitsReceived > 0 
         ? itemNet / totalUnitsReceived 

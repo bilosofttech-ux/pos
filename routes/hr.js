@@ -572,9 +572,9 @@ router.get('/employees/:id/advance-statement', async (req, res) => {
     const allInvoices = await prisma.invoice.findMany({
       where: {
         OR: [
-          { salesman: { contains: emp.fullName, mode: 'insensitive' } },
-          { salesman: { contains: emp.empNo, mode: 'insensitive' } },
-          { salesman: { contains: emp.empNo.replace('EMP-', ''), mode: 'insensitive' } },
+          { salesman: { contains: emp.fullName } },
+          { salesman: { contains: emp.empNo } },
+          { salesman: { contains: emp.empNo.replace('EMP-', '') } },
         ],
       },
     });
