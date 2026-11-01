@@ -6,9 +6,10 @@ const prisma = require('../lib/prisma');
 router.get('/alerts', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
     const where = {};
-    if (userId) where.userId = userId;
-    else return res.json({ counts: { expiredCount: 0, nearExpiry30Count: 0, nearExpiry60Count: 0, outOfStockCount: 0, lowStockCount: 0, totalProducts: 0 }, expired: [], nearExpiry30: [], nearExpiry60: [], outOfStock: [], lowStock: [] });
+    if (userId && userRole !== 'SuperAdmin') where.userId = userId;
+    else if (!userId) where.userId = null;
     const products = await prisma.product.findMany({
       where,
       include: { vendor: true },
@@ -74,9 +75,10 @@ router.get('/alerts', async (req, res) => {
 router.get('/valuation', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
     const where = {};
-    if (userId) where.userId = userId;
-    else return res.json({ totalStockUnits: 0, totalCostValuation: 0, totalTradeValuation: 0, totalRetailValuation: 0, estimatedProfitMargin: 0 });
+    if (userId && userRole !== 'SuperAdmin') where.userId = userId;
+    else if (!userId) where.userId = null;
     const products = await prisma.product.findMany({ where });
 
     let totalCostValuation = 0;
@@ -110,7 +112,7 @@ router.get('/adjustments', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId;
     const where = {};
-    if (userId) where.userId = userId;
+    if (userId) where.product = { userId };
     const logs = await prisma.stockAdjustment.findMany({
       where,
       include: { product: true },

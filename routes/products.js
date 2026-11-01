@@ -20,35 +20,39 @@ router.get('/', async (req, res) => {
   try {
     const { search, category, company } = req.query;
 
-    const where = {};
-    if (search) {
-      where.OR = [
-        { name: { contains: search } },
-        { productCode: { contains: search } },
-        { genericName: { contains: search } },
-        { brandName: { contains: search } },
-        { companyName: { contains: search } },
-        { barcode: { contains: search } },
-      ];
+    const andConditions = [];
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      andConditions.push({
+        OR: [
+          { name: { contains: q } },
+          { productCode: { contains: q } },
+          { genericName: { contains: q } },
+          { brandName: { contains: q } },
+          { companyName: { contains: q } },
+          { barcode: { contains: q } },
+        ],
+      });
     }
 
     if (category && category !== 'All') {
-      where.category = category;
+      andConditions.push({ category });
     }
 
     if (company && company !== 'All') {
-      where.companyName = { contains: company };
+      andConditions.push({ companyName: { contains: company } });
     }
 
     const userId = req.headers['x-user-id'] || req.query.userId;
     const userRole = req.headers['x-user-role'];
     if (userId && userRole !== 'SuperAdmin') {
-      where.userId = userId;
+      andConditions.push({ userId });
     } else if (!userId) {
-      return res.json([]);
-    } else if (!userId) {
-      return res.json([]);
+      andConditions.push({ userId: null });
     }
+
+    const where = andConditions.length > 0 ? { AND: andConditions } : {};
 
     const products = await prisma.product.findMany({
       where,
@@ -183,8 +187,10 @@ router.get('/:id/batches', async (req, res) => {
 router.get('/meta/companies', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const where = (userId && userRole !== 'SuperAdmin') ? { OR: [{ userId }, { userId: null }] } : {};
     const products = await prisma.product.findMany({
-      where: userId ? { userId } : {},
+      where,
       select: {
         id: true,
         companyName: true,

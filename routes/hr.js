@@ -863,8 +863,13 @@ router.get('/owner-profit-summary', async (req, res) => {
       customEnd = new Date(`${endDate}T23:59:59.999Z`);
     }
 
-    // 1. Fetch ALL Invoices with items & products for accurate historical and period COGS and Profit
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const tenantFilter = userId && userRole !== 'SuperAdmin' ? { userId } : (!userId ? { userId: null } : {});
+
+    // 1. Fetch Invoices with items & products for accurate historical and period COGS and Profit
     const allInvoices = await prisma.invoice.findMany({
+      where: tenantFilter,
       include: {
         items: {
           include: {
@@ -874,8 +879,9 @@ router.get('/owner-profit-summary', async (req, res) => {
       },
     });
 
-    // 2. Fetch ALL Transactions for historical & period expenses and liquidity
+    // 2. Fetch Transactions for historical & period expenses and liquidity
     const allTransactions = await prisma.accountTransaction.findMany({
+      where: tenantFilter,
       orderBy: { transactionDate: 'desc' },
     });
 

@@ -15,9 +15,7 @@ router.get('/', async (req, res, next) => {
     if (userId && userRole !== 'SuperAdmin') {
       where.userId = userId;
     } else if (!userId) {
-      return res.json([]);
-    } else if (!userId) {
-      return res.json([]);
+      where.userId = null;
     }
 
     if (search) {
@@ -42,7 +40,7 @@ router.get('/', async (req, res, next) => {
         orderBy: { createdAt: 'desc' },
       }),
       prisma.accountTransaction.findMany({
-        where: { partyType: 'Customer', ...(userId ? { userId } : {}) },
+        where: { partyType: 'Customer', ...(userId && userRole !== 'SuperAdmin' ? { userId } : { userId: null }) },
       }),
     ]);
 
@@ -420,29 +418,32 @@ router.get('/last-item-purchase', async (req, res) => {
 router.get('/profit-summary', async (req, res) => {
   try {
     const { date } = req.query;
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
     let whereClause = {};
+    if (userId && userRole !== 'SuperAdmin') {
+      whereClause.userId = userId;
+    } else if (!userId) {
+      whereClause.userId = null;
+    }
 
     if (date) {
       const parts = date.split('-').map(Number);
       if (parts.length === 3) {
         const start = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
         const end = new Date(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999);
-        whereClause = {
-          createdAt: {
-            gte: start,
-            lte: end,
-          },
+        whereClause.createdAt = {
+          gte: start,
+          lte: end,
         };
       }
     } else {
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
       const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-      whereClause = {
-        createdAt: {
-          gte: start,
-          lte: end,
-        },
+      whereClause.createdAt = {
+        gte: start,
+        lte: end,
       };
     }
 
@@ -815,16 +816,16 @@ router.post('/', async (req, res, next) => {
 
           invoiceItemsData.push({
             productId: prod.id,
-            batchId: matchedBatch ? matchedBatch.id : undefined,
+            batchId: matchedBatch ? matchedBatch.id : null,
             batchNo: targetBatchNo,
             expiryDate: parsedExpiry || (prod ? prod.expiryDate : null),
-            stp: parseFloat(item.stp || item.price || '0'),
-            costPrice: parseFloat(itemCostPrice.toFixed(2)),
-            quantity: qtySold,
-            bonus: bonusSold,
-            discount: parseFloat(item.discount !== undefined ? item.discount : (item.disc ? String(item.disc).replace('%', '') : '0')),
-            salesTax: parseFloat(item.salesTax || item.stax || '0'),
-            netAmount: parseFloat(item.netAmount || item.net || (prod.tradePrice * qtySold)),
+            stp: parseFloat(item.stp || item.price || '0') || 0,
+            costPrice: parseFloat((itemCostPrice || 0).toFixed(2)) || 0,
+            quantity: qtySold || 1,
+            bonus: bonusSold || 0,
+            discount: parseFloat(item.discount !== undefined ? item.discount : (item.disc ? String(item.disc).replace('%', '') : '0')) || 0,
+            salesTax: parseFloat(item.salesTax || item.stax || '0') || 0,
+            netAmount: parseFloat(item.netAmount || item.net || (prod.tradePrice * qtySold)) || 0,
           });
         }
 
@@ -863,6 +864,7 @@ router.post('/', async (req, res, next) => {
             if (!existingCashTx) {
               await tx.accountTransaction.create({
                 data: {
+                  userId: currentTenantUserId,
                   voucherNo: voucherCash,
                   transactionType: 'CustomerReceipt',
                   partyType: 'Customer',
@@ -882,6 +884,7 @@ router.post('/', async (req, res, next) => {
             if (!existingBankTx) {
               await tx.accountTransaction.create({
                 data: {
+                  userId: currentTenantUserId,
                   voucherNo: voucherBank,
                   transactionType: 'CustomerReceipt',
                   partyType: 'Customer',
@@ -902,6 +905,7 @@ router.post('/', async (req, res, next) => {
             const actualReceiptAmount = Math.min(totalPaidAmount, calculatedTotal);
             await tx.accountTransaction.create({
               data: {
+                userId: currentTenantUserId,
                 voucherNo,
                 transactionType: 'CustomerReceipt',
                 partyType: 'Customer',

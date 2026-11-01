@@ -28,7 +28,9 @@ app.get(['/health', '/api/health'], async (req, res) => {
 });
 
 
-// Anti-Tamper 30-Day Free Trial & Commercial License Enforcement Middleware
+// Anti-Tamper 30-Day Free Trial & Commercial License Enforcement Middleware (With in-memory cache to prevent connection pool exhaustion)
+const tenantUserCache = new Map();
+
 const checkTrialAndLicenseMiddleware = async (req, res, next) => {
   const reqPath = req.path || '';
   if (
@@ -51,10 +53,21 @@ const checkTrialAndLicenseMiddleware = async (req, res, next) => {
   }
 
   try {
-    const tenantUser = await prisma.user.findUnique({
-      where: { id: String(tenantUserId) },
-      select: { id: true, role: true, isLicensed: true, createdAt: true, licenseType: true },
-    });
+    const cached = tenantUserCache.get(String(tenantUserId));
+    let tenantUser = null;
+
+    if (cached && cached.expires > Date.now()) {
+      tenantUser = cached.user;
+    } else {
+      tenantUser = await prisma.user.findUnique({
+        where: { id: String(tenantUserId) },
+        select: { id: true, role: true, isLicensed: true, createdAt: true, licenseType: true },
+      });
+      tenantUserCache.set(String(tenantUserId), {
+        user: tenantUser,
+        expires: Date.now() + 5 * 60 * 1000, // 5 min TTL
+      });
+    }
 
     if (!tenantUser) {
       return next();
@@ -79,6 +92,7 @@ const checkTrialAndLicenseMiddleware = async (req, res, next) => {
 
     next();
   } catch (err) {
+    // If DB has temporary latency or timeout, fail open to avoid breaking POS operations
     next();
   }
 };

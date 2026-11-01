@@ -14,10 +14,12 @@ function getDaysDiff(d1, d2 = new Date()) {
 router.get('/expenses', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const transactions = await prisma.accountTransaction.findMany({
-      where: { transactionType: 'Expense', ...(userId ? { userId } : {}) },
       where: {
         transactionType: 'Expense',
+        ...(isTenant ? { userId } : {}),
       },
       orderBy: { createdAt: 'desc' },
     });

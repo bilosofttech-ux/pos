@@ -13,9 +13,7 @@ router.get('/', async (req, res) => {
         where: { userId },
         include: { branches: true },
       });
-    }
-
-    if (!company) {
+    } else {
       company = await prisma.company.findFirst({
         where: { userId: null },
         include: { branches: true },
@@ -30,7 +28,7 @@ router.get('/', async (req, res) => {
       if (userId) {
         const u = await prisma.user.findUnique({ where: { id: userId } }).catch(() => null);
         if (u) {
-          storeName = `${u.fullName}'s Pharmacy`;
+          storeName = u.businessName || (u.fullName ? `${u.fullName}'s Store` : 'My Store & Pharmacy');
           storeEmail = u.email || storeEmail;
         }
       }
@@ -39,8 +37,8 @@ router.get('/', async (req, res) => {
         data: {
           userId: userId || null,
           name: storeName,
-          tagline: 'Leading Retail & Wholesale Solutions',
-          address: 'Main Shop / Counter',
+          tagline: 'Retail & Wholesale Solutions',
+          address: 'Store Counter / Main Branch',
           city: 'Karachi',
           country: 'Pakistan',
           phone: '+92 300 0000000',

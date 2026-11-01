@@ -32,7 +32,7 @@ router.get('/', async (req, res, next) => {
     if (userId && userRole !== 'SuperAdmin') {
       where.userId = userId;
     } else if (!userId) {
-      return res.json([]);
+      where.userId = null;
     }
     const customers = await prisma.customer.findMany({
       where,
