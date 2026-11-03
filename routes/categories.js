@@ -18,7 +18,9 @@ const DEFAULT_CATEGORIES = [
 // GET /api/categories - Get all medicine product categories
 router.get('/', async (req, res, next) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId || null;
     const products = await prisma.product.findMany({
+      where: userId ? { userId } : {},
       select: { category: true },
       distinct: ['category'],
     });

@@ -5,7 +5,9 @@ const prisma = require('../lib/prisma');
 // 1. GET /api/claims - Fetch all supplier claims with vendor details
 router.get('/', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId || null;
     const claims = await prisma.supplierClaim.findMany({
+      where: userId ? { userId } : {},
       include: {
         vendor: {
           select: { id: true, name: true, vendorNo: true, area: true, contactNo: true },
@@ -28,12 +30,14 @@ router.get('/', async (req, res) => {
 // 2. GET /api/claims/eligible-returns - Fetch expired, near-expiry, or damaged items eligible for supplier return
 router.get('/eligible-returns', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId || null;
     const now = new Date();
     const future60Days = new Date();
     future60Days.setDate(now.getDate() + 60);
 
     const eligibleProducts = await prisma.product.findMany({
       where: {
+        ...(userId ? { userId } : {}),
         OR: [
           { expiryDate: { lte: future60Days } },
           { isQuarantined: true },
@@ -55,6 +59,7 @@ router.get('/eligible-returns', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { vendorId, claimType, notes, createdByName, items } = req.body;
+    const userId = req.body.userId || req.headers['x-user-id'] || req.query.userId || null;
 
     if (!vendorId || !items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Vendor ID and return items are required' });
@@ -86,6 +91,7 @@ router.post('/', async (req, res) => {
     const newClaim = await prisma.$transaction(async (tx) => {
       const claim = await tx.supplierClaim.create({
         data: {
+          userId,
           claimNo,
           vendorId,
           claimType: claimType || 'ExpiredReturn',
@@ -120,6 +126,7 @@ router.post('/', async (req, res) => {
 
           await tx.stockAdjustment.create({
             data: {
+              userId,
               productId: item.productId,
               adjustmentType: 'Return',
               quantity: qtyToReturn,
@@ -138,6 +145,7 @@ router.post('/', async (req, res) => {
 
       await tx.accountTransaction.create({
         data: {
+          userId,
           voucherNo: `DN-${String(txCount + 1001)}`,
           transactionType: 'SupplierPayment',
           partyType: 'Vendor',

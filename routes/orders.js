@@ -99,7 +99,11 @@ router.post('/settings', (req, res) => {
 router.get('/', (req, res) => {
   try {
     const { status } = req.query;
-    const orders = readOrders();
+    const userId = req.headers['x-user-id'] || req.query.userId || null;
+    let orders = readOrders();
+    if (userId) {
+      orders = orders.filter(o => !o.userId || o.userId === userId);
+    }
     const filtered = status && status !== 'ALL'
       ? orders.filter(o => o.status === status)
       : orders;
@@ -113,7 +117,11 @@ router.get('/', (req, res) => {
 // GET /api/orders/pending-count - Fetch count of pending orders for real-time notification
 router.get('/pending-count', (req, res) => {
   try {
-    const orders = readOrders();
+    const userId = req.headers['x-user-id'] || req.query.userId || null;
+    let orders = readOrders();
+    if (userId) {
+      orders = orders.filter(o => !o.userId || o.userId === userId);
+    }
     const pending = orders.filter(o => o.status === 'PENDING');
     res.json({ count: pending.length, latestOrder: pending[pending.length - 1] || null });
   } catch (error) {

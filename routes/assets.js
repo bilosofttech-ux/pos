@@ -87,7 +87,9 @@ function computeAssetValuation(asset) {
 // 1. GET /api/assets - Retrieve all fixed assets with live calculated valuations
 router.get('/', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId || null;
     const assets = await prisma.fixedAsset.findMany({
+      where: userId ? { userId } : {},
       orderBy: { createdAt: 'desc' },
       include: { depreciations: true },
     });
@@ -103,7 +105,16 @@ router.get('/', async (req, res) => {
 // 2. GET /api/assets/business-net-worth - Comprehensive Business Valuation & Net Worth Engine
 router.get('/business-net-worth', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId || null;
+    const tenantWhere = userId ? { userId } : {};
+
     const [assets, products, transactions, customers, vendors] = await Promise.all([
+      prisma.fixedAsset.findMany({ where: tenantWhere }),
+      prisma.product.findMany({ where: tenantWhere, select: { stockQuantity: true, purchasePrice: true, tradePrice: true } }),
+      prisma.accountTransaction.findMany({ where: tenantWhere }),
+      prisma.customer.findMany({ where: tenantWhere, include: { invoices: true } }),
+      prisma.vendor.findMany({ where: tenantWhere, include: { purchases: true } }),
+    ]);
       prisma.fixedAsset.findMany(),
       prisma.product.findMany({ select: { stockQuantity: true, purchasePrice: true, tradePrice: true } }),
       prisma.accountTransaction.findMany(),
@@ -264,6 +275,7 @@ router.get('/business-net-worth', async (req, res) => {
 // 3. POST /api/assets - Register a new fixed asset
 router.post('/', async (req, res) => {
   try {
+    const userId = req.body.userId || req.headers['x-user-id'] || req.query.userId || null;
     const {
       name,
       category,
@@ -303,6 +315,7 @@ router.post('/', async (req, res) => {
 
     const newAsset = await prisma.fixedAsset.create({
       data: {
+        userId,
         assetCode,
         name: name.trim(),
         category: category || 'Store Machinery & AC',

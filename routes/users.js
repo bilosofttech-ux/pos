@@ -48,6 +48,31 @@ const ERP_MODULES = [
   'Settings',
 ];
 
+// Helper: Get company profile for a user
+async function getUserCompany(user) {
+  if (!user || !user.id) return null;
+  let company = await prisma.company.findFirst({
+    where: { userId: user.id },
+    include: { branches: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (company) return company;
+
+  if (user.branchId) {
+    const branch = await prisma.branch.findUnique({
+      where: { id: user.branchId },
+      include: { company: { include: { branches: true } } },
+    });
+    if (branch && branch.company) return branch.company;
+  }
+
+  return await prisma.company.findFirst({
+    where: { userId: null },
+    include: { branches: true },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
 // Helper: Ensure default admin account exists only on initial empty DB
 async function ensureSeedUsers() {
   return;
@@ -56,19 +81,43 @@ async function ensureSeedUsers() {
 // GET /api/users - List all users & seed default Admin, Cashier, Salesman if missing
 router.get('/', async (req, res) => {
   try {
-    await ensureSeedUsers();
-    const users = await prisma.user.findMany({
-      include: {
-        branch: true,
-        permissions: true,
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const currentUserId = req.headers['x-user-id'] || req.query.userId || null;
+    const userRole = req.headers['x-user-role'];
 
-    res.json(users);
+    if (userRole === 'SuperAdmin') {
+      const users = await prisma.user.findMany({
+        include: { branch: true, permissions: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      return res.json(users);
+    }
+
+    if (currentUserId) {
+      const userBranches = await prisma.branch.findMany({
+        where: { company: { userId: currentUserId } },
+        select: { id: true },
+      });
+      const branchIds = userBranches.map((b) => b.id);
+
+      const users = await prisma.user.findMany({
+        where: {
+          OR: [
+            { id: currentUserId },
+            ...(branchIds.length > 0 ? [{ branchId: { in: branchIds } }] : []),
+          ],
+        },
+        include: { branch: true, permissions: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      return res.json(users);
+    }
+
+    return res.json([]);
   } catch (err) {
     console.error('Error fetching users:', err);
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
   }
 });
 
@@ -93,332 +142,8 @@ router.post('/wipe-all-data', async (req, res) => {
 
     await ensureSeedUsers();
 
-    res.json({ success: true, message: 'All database test records wiped clean.' });
-  } catch (err) {
-    console.error('Error wiping database:', err);
-    res.status(500).json({ error: 'Failed to wipe database records' });
-  }
-});
-
-router.post('/register', async (req, res) => {
-  try {
-    const {
-      fullName,
-      email,
-      password,
-      username,
-      businessName,
-      businessType,
-      storeName,
-      phone,
-      address,
-      city,
-      tagline,
-      drugLicenseNo,
-      ntnTaxNo,
-    } = req.body;
-
-    if (!fullName || !email || !password) {
-      return res.status(400).json({ error: 'Full Name, Email, and Password are required.' });
-    }
-
-    const cleanEmail = String(email).toLowerCase().trim();
-    const cleanPassword = String(password).trim();
-
-    if (cleanPassword.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
-    }
-    if (!/[A-Z]/.test(cleanPassword)) {
-      return res.status(400).json({ error: 'Password must contain at least one uppercase letter (A-Z).' });
-    }
-    if (!/[0-9]/.test(cleanPassword)) {
-      return res.status(400).json({ error: 'Password must contain at least one number (0-9).' });
-    }
-    if (!/[^A-Za-z0-9]/.test(cleanPassword)) {
-      return res.status(400).json({ error: 'Password must contain at least one special symbol (!@#$%^&* etc.).' });
-    }
-    let cleanUsername = username
-      ? String(username).toLowerCase().trim()
-      : cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '');
-
-    if (!cleanUsername) cleanUsername = 'user_' + Math.floor(1000 + Math.random() * 9000);
-
-    // Check if email or username already taken
-    const existing = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: cleanEmail },
-          { username: cleanUsername },
-        ],
-      },
-    });
-
-    if (existing) {
-      if (existing.email && existing.email.toLowerCase() === cleanEmail) {
-        return res.status(400).json({ error: 'An account with this email address already exists. Please log in.' });
-      }
-      cleanUsername = `${cleanUsername}_${Math.floor(100 + Math.random() * 900)}`;
-    }
-
-    const newUser = await prisma.user.create({
-      data: {
-        fullName: fullName.trim(),
-        email: cleanEmail,
-        username: cleanUsername,
-        password: hashPassword(cleanPassword),
-        role: 'Admin',
-        isActive: true,
-        authProvider: 'email',
-        salary: 0,
-        commissionRate: 0,
-        overtimeRate: 0,
-        permissions: {
-          create: ERP_MODULES.map((mod) => ({
-            module: mod,
-            canCreate: true,
-            canEdit: true,
-            canDelete: true,
-            canView: true,
-            canApprove: true,
-            canPrint: true,
-            canExport: true,
-          })),
-        },
-      },
-      include: {
-        branch: true,
-        permissions: true,
-      },
-    });
-
-    let userCompany = null;
-    // Create default vendor and counter-sale customer for this user workspace
-    try {
-      await prisma.vendor.create({
-        data: {
-          vendorNo: Math.floor(1000 + Math.random() * 8999),
-          name: `${businessName ? businessName.trim() : 'Direct Supplier'} (Main)`,
-          area: 'Wholesale Market',
-          contactNo: 'N/A',
-          userId: newUser.id,
-        },
-      });
-      await prisma.customer.create({
-        data: {
-          accountNo: Math.floor(1000 + Math.random() * 8999),
-          name: 'Walk-in / Counter Customer',
-          address: 'Store Counter',
-          contactNo: 'N/A',
-          customerType: 'Retailer',
-          userId: newUser.id,
-        },
-      });
-      const finalStore = (storeName || businessName || `${fullName.trim()}'s Store`).trim();
-      const finalPhone = (phone || '+92 300 0000000').trim();
-      const finalAddress = (address || 'Store Counter / Main Branch').trim();
-      const finalCity = (city || 'Karachi').trim();
-      const finalTagline = (tagline || 'Retail & Wholesale Solutions').trim();
-
-      userCompany = await prisma.company.create({
-        data: {
-          userId: newUser.id,
-          name: finalStore,
-          tagline: finalTagline,
-          address: finalAddress,
-          city: finalCity,
-          country: 'Pakistan',
-          phone: finalPhone,
-          email: cleanEmail,
-          drugLicenseNo: drugLicenseNo || null,
-          ntnTaxNo: ntnTaxNo || null,
-          currency: 'PKR',
-          currencySymbol: 'Rs.',
-          defaultTaxRate: 0.0,
-        },
-      });
-    } catch (e) {
-      console.warn('Initial vendor/customer/company setup note:', e.message);
-    }
-
-    res.status(201).json({
-      id: newUser.id,
-      username: newUser.username,
-      fullName: newUser.fullName,
-      email: newUser.email,
-      role: newUser.role,
-      branch: newUser.branch,
-      permissions: newUser.permissions,
-      authProvider: newUser.authProvider,
-      company: userCompany,
-      message: 'Account created successfully!',
-    });
-  } catch (err) {
-    console.error('Error registering user:', err);
-    res.status(500).json({ error: err.message || 'Registration failed' });
-  }
-});
-
-// POST /api/users/login - Authenticate user account with Email or Username
-router.post('/login', async (req, res) => {
-  try {
-    const { username, email, password } = req.body;
-    const identifier = username || email;
-    if (!identifier || !password) {
-      return res.status(400).json({ error: 'Username/Email and Password are required' });
-    }
-
-    await ensureSeedUsers();
-    const cleanId = String(identifier).toLowerCase().trim();
-    const cleanPassword = String(password).trim();
-
-    let user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { username: cleanId },
-          { email: cleanId },
-        ],
-      },
-      include: { branch: true, permissions: true },
-    });
-
-    if (!user) {
-      const allUsers = await prisma.user.findMany({
-        include: { branch: true, permissions: true },
-      });
-      user = allUsers.find(
-        (u) =>
-          (u.username && u.username.toLowerCase().trim() === cleanId) ||
-          (u.email && u.email.toLowerCase().trim() === cleanId)
-      );
-    }
-
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid username or password' });
-    }
-
-    if (!user.isActive) {
-      return res.status(403).json({ error: 'Account disabled. Please contact administrator.' });
-    }
-
-    const isPasswordValid = verifyPassword(cleanPassword, user.password.trim());
-    if (!isPasswordValid) {
-      return res.status(401).json({ error: 'Invalid username or password' });
-    } else if (!user.password.startsWith('scrypt:')) {
-      // Auto upgrade plain text to scrypt
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { password: hashPassword(cleanPassword) }
-      }).catch(() => null);
-    }
-
-    res.json({
-      id: user.id,
-      username: user.username,
-      fullName: user.fullName,
-      email: user.email,
-      role: user.role,
-      branch: user.branch,
-      permissions: user.permissions,
-      authProvider: user.authProvider || 'email',
-      isLicensed: Boolean(user.isLicensed || user.role === 'SuperAdmin'),
-      licenseType: user.licenseType || (user.isLicensed ? 'Commercial' : 'Trial'),
-      createdAt: user.createdAt,
-      avatarUrl: user.avatarUrl,
-    });
-  } catch (err) {
-    console.error('Error in user login:', err);
-    res.status(500).json({ error: 'Login failed on server' });
-  }
-});
-
-// POST /api/users/google-login - One-click persistent Google authentication
-router.post('/google-login', async (req, res) => {
-  try {
-    const { email, fullName, googleId, avatarUrl } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Google email is required' });
-    }
-
-    const cleanEmail = String(email).toLowerCase().trim();
-    let user = await prisma.user.findFirst({
-      where: { email: cleanEmail },
-      include: { branch: true, permissions: true },
-    });
-
-    if (!user) {
-      let cleanUsername = cleanEmail.split('@')[0].replace(/[^a-z0-9_]/g, '');
-      const existingUsername = await prisma.user.findUnique({ where: { username: cleanUsername } });
-      if (existingUsername) {
-        cleanUsername = `${cleanUsername}_${Math.floor(100 + Math.random() * 900)}`;
-      }
-
-      user = await prisma.user.create({
-        data: {
-          fullName: fullName ? fullName.trim() : cleanEmail.split('@')[0],
-          email: cleanEmail,
-          username: cleanUsername,
-          password: 'google_oauth_' + Math.random().toString(36).substring(2),
-          role: 'Admin',
-          authProvider: 'google',
-          avatarUrl: avatarUrl || null,
-          isActive: true,
-          permissions: {
-            create: ERP_MODULES.map((mod) => ({
-              module: mod,
-              canCreate: true, canEdit: true, canDelete: true, canView: true,
-              canApprove: true, canPrint: true, canExport: true,
-            })),
-          },
-        },
-        include: { branch: true, permissions: true },
-      });
-
-      try {
-        await prisma.vendor.create({
-          data: {
-            vendorNo: Math.floor(1000 + Math.random() * 8999),
-            name: 'Direct Supplier (Main)',
-            area: 'Wholesale Market',
-            contactNo: 'N/A',
-            userId: user.id,
-          },
-        });
-        await prisma.customer.create({
-          data: {
-            accountNo: Math.floor(1000 + Math.random() * 8999),
-            name: 'Walk-in Customer',
-            address: 'Store Counter',
-            contactNo: 'N/A',
-            customerType: 'Retailer',
-            userId: user.id,
-          },
-        });
-        await prisma.company.create({
-          data: {
-            userId: user.id,
-            name: (user.fullName ? user.fullName.trim() : 'My') + ' Pharmacy / Store',
-            tagline: 'Leading Retail & Wholesale Solutions',
-            address: 'Store Counter / Main Branch',
-            city: 'Karachi',
-            country: 'Pakistan',
-            phone: '+92 300 0000000',
-            email: cleanEmail,
-            currency: 'PKR',
-            currencySymbol: 'Rs.',
-            defaultTaxRate: 0.0,
-          },
-        });
-      } catch (e) {}
-    } else {
-      if (avatarUrl && user.avatarUrl !== avatarUrl) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: { avatarUrl },
-          include: { branch: true, permissions: true },
-        });
-      }
-    }
-
+    const userCompany = await getUserCompany(user);
+    const userCompany = await getUserCompany(user);
     res.json({
       id: user.id,
       username: user.username,
@@ -429,6 +154,7 @@ router.post('/google-login', async (req, res) => {
       permissions: user.permissions,
       authProvider: user.authProvider || 'google',
       avatarUrl: user.avatarUrl,
+      company: userCompany,
     });
   } catch (err) {
     console.error('Error in Google login:', err);

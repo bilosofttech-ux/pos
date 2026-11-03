@@ -461,6 +461,7 @@ model Payroll {
 // ─────────────────────────────────────────────
 model FixedAsset {
   id                 String              @id @default(uuid())
+  userId             String?
   assetCode          String              @unique // AST-1001, AST-1002
   name               String              // e.g. "Gree 1.5 Ton Inverter AC", "Executive Office Chair"
   category           String              @default("Store Machinery & AC") // "Furniture & Fixtures", "Electronics & IT", "Store Machinery & AC", "Shop Renovation & Display", "Vehicles"
