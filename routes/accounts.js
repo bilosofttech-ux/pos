@@ -874,10 +874,13 @@ router.post('/recheck-ledgers', async (req, res) => {
   }
 });
 
-// 5. POST /api/accounts/voucher - Record Financial Voucher / Payment / Receipt / Expense
-router.post('/voucher', async (req, res) => {
+// 5. POST /api/accounts/voucher & /transactions - Record Financial Voucher / Payment / Receipt / Expense
+router.post(['/voucher', '/transactions'], async (req, res) => {
   try {
-    const { transactionType, partyType, partyId, partyName, amount, paymentMethod, referenceNo, description } = req.body;
+    let { transactionType, partyType, partyId, partyName, amount, paymentMethod, referenceNo, description } = req.body;
+    const tenantUserId = req.body.userId || req.headers['x-user-id'] || null;
+    if (transactionType === 'Receipt') transactionType = 'CustomerReceipt';
+    if (transactionType === 'Payment') transactionType = 'SupplierPayment';
 
     if (!transactionType || !amount) {
       return res.status(400).json({ error: 'transactionType and amount are required' });
@@ -899,7 +902,7 @@ router.post('/voucher', async (req, res) => {
       transactionType === 'ProfitWithdrawal' ||
       transactionType === 'CapitalWithdrawal'
     ) {
-      const allTx = await prisma.accountTransaction.findMany();
+      const allTx = await prisma.accountTransaction.findMany({ where: tenantUserId ? { userId: tenantUserId } : {} });
       let totalBankIn = 0;
       let totalBankOut = 0;
       let totalCashIn = 0;
@@ -958,6 +961,7 @@ router.post('/voucher', async (req, res) => {
 
     const newTx = await prisma.accountTransaction.create({
       data: {
+        userId: tenantUserId,
         voucherNo,
         transactionType,
         partyType: partyType || 'GeneralExpense',

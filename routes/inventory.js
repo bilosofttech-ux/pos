@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 
+router.get('/', (req, res) => res.json({ status: 'ok', module: 'inventory' }));
+
 // GET /api/inventory/alerts - Retrieve Expiry & Stock Level Alerts
 router.get('/alerts', async (req, res) => {
   try {

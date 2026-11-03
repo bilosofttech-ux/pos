@@ -214,6 +214,7 @@ model ProductBatch {
 // ─────────────────────────────────────────────
 model StockAdjustment {
   id             String   @id @default(uuid())
+  userId         String?
   productId      String
   product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   adjustmentType String   // Damaged, Expired, PhysicalCount, Return, AdjustmentIn, AdjustmentOut
@@ -337,6 +338,7 @@ model AccountTransaction {
 // ─────────────────────────────────────────────
 model SupplierClaim {
   id            String              @id @default(uuid())
+  userId        String?
   claimNo       String              @unique
   vendorId      String
   vendor        Vendor              @relation(fields: [vendorId], references: [id])

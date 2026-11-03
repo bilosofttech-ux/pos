@@ -984,20 +984,28 @@ router.put('/:id', async (req, res, next) => {
             }).catch(() => null);
 
             if (oldItem.batchId) {
-              await tx.productBatch.update({
-                where: { id: oldItem.batchId },
-                data: { quantity: { increment: qtyToRestore } },
-              }).catch(() => null);
+              const b = await tx.productBatch.findUnique({ where: { id: oldItem.batchId } }).catch(() => null);
+              if (b) {
+                await tx.productBatch.update({
+                  where: { id: b.id },
+                  data: { quantity: { increment: qtyToRestore } },
+                });
+              }
             } else if (oldItem.batchNo) {
-              await tx.productBatch.update({
+              const b = await tx.productBatch.findUnique({
                 where: {
                   productId_batchNo: {
                     productId: oldItem.productId,
                     batchNo: oldItem.batchNo,
                   },
                 },
-                data: { quantity: { increment: qtyToRestore } },
               }).catch(() => null);
+              if (b) {
+                await tx.productBatch.update({
+                  where: { id: b.id },
+                  data: { quantity: { increment: qtyToRestore } },
+                });
+              }
             }
           }
         }
@@ -1255,20 +1263,39 @@ router.post('/:invoiceNo/return', async (req, res, next) => {
 
               // Restore batch stock
               if (item.batchId) {
-                await tx.productBatch.update({
-                  where: { id: item.batchId },
-                  data: { quantity: { increment: qtyToRestore } },
-                }).catch(() => null);
+                const b = await tx.productBatch.findUnique({ where: { id: item.batchId } }).catch(() => null);
+                if (b) {
+                  await tx.productBatch.update({
+                    where: { id: b.id },
+                    data: { quantity: { increment: qtyToRestore } },
+                  });
+                }
               } else if (item.batchNo) {
-                await tx.productBatch.update({
+                const b = await tx.productBatch.findUnique({
                   where: {
                     productId_batchNo: {
                       productId: item.productId,
                       batchNo: item.batchNo,
                     },
                   },
-                  data: { quantity: { increment: qtyToRestore } },
                 }).catch(() => null);
+                if (b) {
+                  await tx.productBatch.update({
+                    where: { id: b.id },
+                    data: { quantity: { increment: qtyToRestore } },
+                  });
+                } else {
+                  await tx.productBatch.create({
+                    data: {
+                      productId: item.productId,
+                      batchNo: item.batchNo,
+                      quantity: qtyToRestore,
+                      tradePrice: currentProd.tradePrice || 0,
+                      retailPrice: currentProd.retailPrice || 0,
+                      costPrice: currentProd.costPrice || 0,
+                    },
+                  }).catch(() => null);
+                }
               }
 
               await tx.stockAdjustment.create({

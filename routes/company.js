@@ -60,8 +60,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/company - Update Company Profile Settings for current user workspace
-router.post('/', async (req, res) => {
+// POST & PUT /api/company - Update Company Profile Settings for current user workspace
+const updateCompanyHandler = async (req, res) => {
   try {
     const userId = req.body.userId || req.headers['x-user-id'] || null;
     const {
@@ -134,7 +134,10 @@ router.post('/', async (req, res) => {
     console.error('Error updating company profile:', err);
     res.status(500).json({ error: 'Failed to update company profile' });
   }
-});
+};
+
+router.post('/', updateCompanyHandler);
+router.put('/', updateCompanyHandler);
 
 // POST /api/company/branches - Add a new store branch
 router.post('/branches', async (req, res) => {
