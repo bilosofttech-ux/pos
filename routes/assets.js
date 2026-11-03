@@ -115,12 +115,6 @@ router.get('/business-net-worth', async (req, res) => {
       prisma.customer.findMany({ where: tenantWhere, include: { invoices: true } }),
       prisma.vendor.findMany({ where: tenantWhere, include: { purchases: true } }),
     ]);
-      prisma.fixedAsset.findMany(),
-      prisma.product.findMany({ select: { stockQuantity: true, purchasePrice: true, tradePrice: true } }),
-      prisma.accountTransaction.findMany(),
-      prisma.customer.findMany({ include: { invoices: true } }),
-      prisma.vendor.findMany({ include: { purchases: true } }),
-    ]);
 
     // 1. Fixed Assets Valuation
     let totalFixedAssetsOriginalCost = 0;

@@ -5,29 +5,21 @@ const prisma = require('../lib/prisma');
 // Helper: Dynamically synchronize User Accounts & Role Permissions into Employee Directory
 async function syncUserAccountsWithEmployees(tenantUserId = null) {
   try {
-    let users = [];
-    if (tenantUserId) {
-      const userBranches = await prisma.branch.findMany({
-        where: { company: { userId: tenantUserId } },
-        select: { id: true },
-      });
-      const branchIds = userBranches.map((b) => b.id);
-      users = await prisma.user.findMany({
-        where: {
-          OR: [
-            { id: tenantUserId },
-            ...(branchIds.length > 0 ? [{ branchId: { in: branchIds } }] : []),
-          ],
-        },
-        include: { permissions: true },
-      });
-    } else {
-      users = await prisma.user.findMany({
-        where: { branchId: null },
-        take: 5,
-        include: { permissions: true },
-      });
-    }
+    if (!tenantUserId) return;
+    const userBranches = await prisma.branch.findMany({
+      where: { company: { userId: tenantUserId } },
+      select: { id: true },
+    });
+    const branchIds = userBranches.map((b) => b.id);
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { id: tenantUserId },
+          ...(branchIds.length > 0 ? [{ branchId: { in: branchIds } }] : []),
+        ],
+      },
+      include: { permissions: true },
+    });
 
     for (const user of users) {
       const userRole = user.role || 'Salesman';
@@ -37,7 +29,7 @@ async function syncUserAccountsWithEmployees(tenantUserId = null) {
       let existingEmp = await prisma.employee.findFirst({
         where: {
           empNo,
-          ...(tenantUserId ? { userId: tenantUserId } : {}),
+          userId: tenantUserId,
         },
       });
 
@@ -71,7 +63,7 @@ async function syncUserAccountsWithEmployees(tenantUserId = null) {
       }
     }
   } catch (err) {
-    console.warn('Employee user sync warning:', err.message);
+    console.warn('Sync employee warning:', err.message);
   }
 }
 
@@ -180,8 +172,7 @@ router.get('/employees', async (req, res) => {
 router.post('/employees', async (req, res) => {
   try {
     const userId = req.body.userId || req.headers['x-user-id'] || req.query.userId || null;
-    const {
-      fullName,
+    const { fullName, cnic, phone, email, designation, department, basicSalary, commissionRate, bankAccount, username, password } = req.body;
     if (!fullName) {
       return res.status(400).json({ error: 'Full Name is required' });
     }
@@ -190,7 +181,7 @@ router.post('/employees', async (req, res) => {
     const count = await prisma.employee.count();
     const empNo = `EMP-${sysUsername.toUpperCase()}`;
 
-    // 1. Create System User account in PostgreSQL
+    // 1. Create System User account
     let userRecord = await prisma.user.findUnique({ where: { username: sysUsername } });
     if (!userRecord) {
       userRecord = await prisma.user.create({
@@ -207,7 +198,7 @@ router.post('/employees', async (req, res) => {
       });
     }
 
-    // 2. Create Employee record in PostgreSQL
+    // 2. Create Employee record
     const newEmp = await prisma.employee.create({
       data: {
         userId,
@@ -269,9 +260,17 @@ router.put('/employees/:id', async (req, res) => {
 // ─────────────────────────────────────────────
 router.get('/attendance', async (req, res) => {
   try {
-    const userId = req.headers['x-user-id'] || req.query.userId || null;
+    const { date } = req.query;
+    let whereClause = {};
+
+    if (date) {
+      const targetDate = new Date(date);
+      const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+      const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+      whereClause.date = { gte: startOfDay, lte: endOfDay };
+    }
+
     const records = await prisma.attendance.findMany({
-      where: userId ? { employee: { userId } } : {},
       where: whereClause,
       include: {
         employee: { select: { id: true, empNo: true, fullName: true, designation: true } },
@@ -316,9 +315,7 @@ router.post('/attendance', async (req, res) => {
 // ─────────────────────────────────────────────
 router.get('/leaves', async (req, res) => {
   try {
-    const userId = req.headers['x-user-id'] || req.query.userId || null;
     const leaves = await prisma.leaveRequest.findMany({
-      where: userId ? { employee: { userId } } : {},
       include: {
         employee: { select: { id: true, empNo: true, fullName: true, designation: true } },
       },
@@ -390,9 +387,12 @@ router.patch('/leaves/:id/status', async (req, res) => {
 // ─────────────────────────────────────────────
 router.get('/advances', async (req, res) => {
   try {
-    const userId = req.headers['x-user-id'] || req.query.userId || null;
+    const { employeeId, status } = req.query;
+    let whereClause = {};
+    if (employeeId) whereClause.employeeId = employeeId;
+    if (status) whereClause.status = status;
+
     const advances = await prisma.salaryAdvance.findMany({
-      where: userId ? { employee: { userId } } : {},
       where: whereClause,
       include: {
         employee: { select: { id: true, empNo: true, fullName: true, designation: true, basicSalary: true, bankAccount: true } },
@@ -680,9 +680,7 @@ router.get('/employees/:id/commission', async (req, res) => {
 // ─────────────────────────────────────────────
 router.get('/payrolls', async (req, res) => {
   try {
-    const userId = req.headers['x-user-id'] || req.query.userId || null;
     const payrolls = await prisma.payroll.findMany({
-      where: userId ? { employee: { userId } } : {},
       include: {
         employee: true,
       },
