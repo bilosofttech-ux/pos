@@ -7,14 +7,15 @@ const DEFAULT_VENDORS = [
   { vendorNo: 1, name: 'General Vendor', area: 'Main Wholesale Market', contactNo: 'N/A' },
 ];
 
-// Helper to ensure Default Vendors (#1 to #8) exist in PostgreSQL
-async function ensureDefaultVendors() {
+// Helper to ensure Default Vendors (#1 to #8) exist for a tenant in PostgreSQL
+async function ensureDefaultVendors(tenantUserId) {
   try {
     for (const v of DEFAULT_VENDORS) {
-      const existing = await prisma.vendor.findFirst({ where: { vendorNo: v.vendorNo } });
+      const existing = await prisma.vendor.findFirst({ where: { vendorNo: v.vendorNo, userId: tenantUserId || null } });
       if (!existing) {
         await prisma.vendor.create({
           data: {
+            userId: tenantUserId || null,
             vendorNo: v.vendorNo,
             name: v.name,
             area: v.area,
@@ -31,14 +32,13 @@ async function ensureDefaultVendors() {
 // GET all vendors
 router.get('/', async (req, res, next) => {
   try {
-    await ensureDefaultVendors();
     const userId = req.headers['x-user-id'] || req.query.userId;
     const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
+    await ensureDefaultVendors(isTenant ? userId : null);
     const where = {};
-    if (userId && userRole !== 'SuperAdmin') {
-      where.userId = userId;
-    } else if (!userId) {
-      where.userId = null;
+    if (isTenant) {
+      where.OR = [{ userId }, { userId: null, vendorNo: 1 }];
     }
     const vendors = await prisma.vendor.findMany({
       where,

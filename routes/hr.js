@@ -73,10 +73,12 @@ async function syncUserAccountsWithEmployees(tenantUserId = null) {
 router.get('/employees', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId || null;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     await syncUserAccountsWithEmployees(userId);
 
     const employees = await prisma.employee.findMany({
-      where: userId ? { userId } : {},
+      where: isTenant ? { userId } : {},
       include: {
         attendances: { orderBy: { date: 'desc' }, take: 10 },
         leaves: { orderBy: { createdAt: 'desc' } },
@@ -88,10 +90,12 @@ router.get('/employees', async (req, res) => {
 
     // Also attach system User accounts & Role Permissions and live Commission & Advances to each employee record
     const users = await prisma.user.findMany({
+      where: isTenant ? { id: userId } : {},
       include: { permissions: true },
     });
 
     const allInvoices = await prisma.invoice.findMany({
+      where: isTenant ? { userId } : {},
       select: {
         invoiceNo: true,
         salesman: true,
@@ -260,8 +264,14 @@ router.put('/employees/:id', async (req, res) => {
 // ─────────────────────────────────────────────
 router.get('/attendance', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { date } = req.query;
     let whereClause = {};
+    if (isTenant) {
+      whereClause.employee = { userId };
+    }
 
     if (date) {
       const targetDate = new Date(date);
@@ -315,7 +325,11 @@ router.post('/attendance', async (req, res) => {
 // ─────────────────────────────────────────────
 router.get('/leaves', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const leaves = await prisma.leaveRequest.findMany({
+      where: isTenant ? { employee: { userId } } : {},
       include: {
         employee: { select: { id: true, empNo: true, fullName: true, designation: true } },
       },
@@ -387,8 +401,12 @@ router.patch('/leaves/:id/status', async (req, res) => {
 // ─────────────────────────────────────────────
 router.get('/advances', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { employeeId, status } = req.query;
     let whereClause = {};
+    if (isTenant) whereClause.employee = { userId };
     if (employeeId) whereClause.employeeId = employeeId;
     if (status) whereClause.status = status;
 
@@ -409,6 +427,7 @@ router.get('/advances', async (req, res) => {
 
 router.post('/advances', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.body.userId;
     const { employeeId, amount, paymentMethod, reason, notes, requestDate } = req.body;
     if (!employeeId || !amount || parseFloat(amount) <= 0) {
       return res.status(400).json({ error: 'Employee and a valid advance amount are required' });
@@ -442,6 +461,7 @@ router.post('/advances', async (req, res) => {
     const txCount = await prisma.accountTransaction.count();
     await prisma.accountTransaction.create({
       data: {
+        userId: emp.userId || userId || null,
         voucherNo: `EV-${String(txCount + 1001)}`,
         transactionType: 'Expense',
         partyType: 'GeneralExpense',
@@ -680,7 +700,11 @@ router.get('/employees/:id/commission', async (req, res) => {
 // ─────────────────────────────────────────────
 router.get('/payrolls', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const payrolls = await prisma.payroll.findMany({
+      where: isTenant ? { employee: { userId } } : {},
       include: {
         employee: true,
       },
@@ -801,6 +825,7 @@ router.post('/payrolls/:id/pay', async (req, res) => {
     const count = await prisma.accountTransaction.count();
     await prisma.accountTransaction.create({
       data: {
+        userId: payroll.employee ? payroll.employee.userId : null,
         voucherNo: `EV-${String(count + 1001)}`,
         transactionType: 'Expense',
         partyType: 'GeneralExpense',
@@ -1246,7 +1271,12 @@ router.post('/owner-drawings', async (req, res) => {
     const isBank = method.toLowerCase().includes('bank') || method.toLowerCase().includes('card') || method.toLowerCase().includes('online') || method.toLowerCase().includes('ibft') || method.toLowerCase().includes('cheque');
 
     // 1. Check Cash/Bank Liquidity
-    const allTransactions = await prisma.accountTransaction.findMany();
+    const tenantUserId = req.headers['x-user-id'] || req.body.userId || null;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = tenantUserId && userRole !== 'SuperAdmin';
+    const allTransactions = await prisma.accountTransaction.findMany({
+      where: isTenant ? { userId: tenantUserId } : {},
+    });
     let totalCashIn = 0;
     let totalCashOut = 0;
     let totalBankIn = 0;
@@ -1299,6 +1329,7 @@ router.post('/owner-drawings', async (req, res) => {
 
     const newTx = await prisma.accountTransaction.create({
       data: {
+        userId: tenantUserId,
         voucherNo,
         transactionType: 'ProfitWithdrawal',
         partyType: 'OwnerDrawing',

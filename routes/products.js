@@ -108,12 +108,16 @@ router.get('/', async (req, res) => {
 // GET /api/products/:id/batches - Retrieve all available batches for a specific product
 router.get('/:id/batches', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { id } = req.params;
 
     // Find product by id or productCode
     const product = await prisma.product.findFirst({
       where: {
         OR: [{ id: id }, { productCode: id }],
+        ...(isTenant ? { userId } : {}),
       },
       include: {
         batches: {
@@ -277,7 +281,11 @@ router.get('/meta/companies', async (req, res) => {
 // GET /api/products/meta/suggestions - Retrieve distinct formulas (genericName), brandNames, and companyNames for instant autocomplete
 router.get('/meta/suggestions', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const products = await prisma.product.findMany({
+      where: isTenant ? { userId } : {},
       select: {
         genericName: true,
         brandName: true,
@@ -330,6 +338,9 @@ router.get('/meta/suggestions', async (req, res) => {
 // GET /api/products/substitutes - Find alternative brand medicines with same Generic Salt / Formula
 router.get('/substitutes', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { genericName, query } = req.query;
 
     if (!genericName && !query) {
@@ -346,6 +357,7 @@ router.get('/substitutes', async (req, res) => {
           { name: { contains: searchTerm } },
         ],
         isQuarantined: false,
+        ...(isTenant ? { userId } : {}),
       },
       include: { vendor: true },
       orderBy: [
@@ -364,9 +376,15 @@ router.get('/substitutes', async (req, res) => {
 // GET /api/products/:id - Read single product detail
 router.get('/:id', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { id } = req.params;
-    const product = await prisma.product.findUnique({
-      where: { id },
+    const product = await prisma.product.findFirst({
+      where: {
+        id,
+        ...(isTenant ? { userId } : {}),
+      },
       include: { vendor: true },
     });
 
@@ -853,6 +871,9 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/products/:id - Delete product item safely
 router.delete('/:id', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { id } = req.params;
 
     // Find target product by ID or productCode
@@ -862,6 +883,7 @@ router.delete('/:id', async (req, res) => {
           { id: id },
           { productCode: id },
         ],
+        ...(isTenant ? { userId } : {}),
       },
     });
 

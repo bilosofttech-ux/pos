@@ -131,6 +131,10 @@ router.get('/', async (req, res, next) => {
 // GET /api/invoices/item-sales-history - Detailed search of item sales with date/month filters & customer info
 router.get('/item-sales-history', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
+
     const {
       query,
       itemName,
@@ -165,6 +169,9 @@ router.get('/item-sales-history', async (req, res) => {
 
     // 2. Invoice Date & Customer Filters
     const invoiceWhere = {};
+    if (isTenant) {
+      invoiceWhere.userId = userId;
+    }
 
     // Customer filter
     if (custSearchStr) {
@@ -296,6 +303,9 @@ router.get('/item-sales-history', async (req, res) => {
 // GET /api/invoices/last-item-purchase - Retrieve last purchase details for specific customer & item
 router.get('/last-item-purchase', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { customerAccNo, customerName, productId, productCode, productName } = req.query;
 
     const cAcc = (customerAccNo || '').trim();
@@ -317,6 +327,7 @@ router.get('/last-item-purchase', async (req, res) => {
     try {
       const invWhere = {
         isReturned: false,
+        ...(isTenant ? { userId } : {}),
       };
 
       if (cAcc && !isNaN(Number(cAcc))) {
@@ -533,10 +544,14 @@ router.get('/profit-summary', async (req, res) => {
 // GET /api/invoices/:invoiceNo - Find single invoice with payment details
 router.get('/:invoiceNo', async (req, res, next) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { invoiceNo } = req.params;
     const invoice = await prisma.invoice.findFirst({
       where: {
         OR: [{ invoiceNo: invoiceNo }, { id: invoiceNo }],
+        ...(isTenant ? { userId } : {}),
       },
       include: {
         customer: true,
@@ -553,6 +568,7 @@ router.get('/:invoiceNo', async (req, res, next) => {
     const relatedTxs = await prisma.accountTransaction.findMany({
       where: {
         partyType: 'Customer',
+        ...(isTenant ? { userId } : {}),
         OR: [
           { voucherNo: { startsWith: `REC-POS-${invoice.invoiceNo}` } },
           { voucherNo: { startsWith: `REFUND-POS-${invoice.invoiceNo}` } },
@@ -950,11 +966,17 @@ router.post('/', async (req, res, next) => {
 // PUT /api/invoices/:id - Update existing wholesale invoice using Reverse and Re-apply Accounting Logic
 router.put('/:id', async (req, res, next) => {
   try {
+    const userId = req.headers['x-user-id'] || req.body.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { id } = req.params;
     const { totalAmount, items, paidAmount, cashPaid, bankPaid, paymentMethod, bankRef } = req.body;
 
     const existing = await prisma.invoice.findFirst({
-      where: { OR: [{ id }, { invoiceNo: String(id) }] },
+      where: {
+        OR: [{ id }, { invoiceNo: String(id) }],
+        ...(isTenant ? { userId } : {}),
+      },
       include: { customer: true, items: { include: { product: true } } },
     });
 
@@ -1223,12 +1245,16 @@ router.put('/:id', async (req, res, next) => {
 // POST /api/invoices/:invoiceNo/return - Execute Return on Invoice
 router.post('/:invoiceNo/return', async (req, res, next) => {
   try {
+    const userId = req.headers['x-user-id'] || req.body.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { invoiceNo } = req.params;
     const { refundMethod, bankRef, reason, returnedBy } = req.body;
 
     const existing = await prisma.invoice.findFirst({
       where: {
         OR: [{ invoiceNo }, { id: invoiceNo }],
+        ...(isTenant ? { userId } : {}),
       },
       include: {
         customer: true,

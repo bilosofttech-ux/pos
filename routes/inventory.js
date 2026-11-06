@@ -113,8 +113,10 @@ router.get('/valuation', async (req, res) => {
 router.get('/adjustments', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const where = {};
-    if (userId) where.product = { userId };
+    if (isTenant) where.product = { userId };
     const logs = await prisma.stockAdjustment.findMany({
       where,
       include: { product: true },
@@ -131,13 +133,21 @@ router.get('/adjustments', async (req, res) => {
 // POST /api/inventory/adjust - Execute stock adjustment / return / damaged log
 router.post('/adjust', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.body.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { productId, adjustmentType, quantity, reason, adjustedBy } = req.body;
 
     if (!productId || !adjustmentType || quantity === undefined) {
       return res.status(400).json({ error: 'productId, adjustmentType, and quantity are required' });
     }
 
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    const product = await prisma.product.findFirst({
+      where: {
+        id: productId,
+        ...(isTenant ? { userId } : {}),
+      },
+    });
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
@@ -163,6 +173,7 @@ router.post('/adjust', async (req, res) => {
       }),
       prisma.stockAdjustment.create({
         data: {
+          userId: isTenant ? userId : null,
           productId,
           adjustmentType,
           quantity: qtyNumber,
@@ -188,8 +199,14 @@ router.post('/adjust', async (req, res) => {
 // GET /api/inventory/expiry-analysis - Batch Expiry Financial Risk Analysis & Timeline
 router.get('/expiry-analysis', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { company } = req.query;
     const where = {};
+    if (isTenant) {
+      where.userId = userId;
+    }
     if (company && company !== 'ALL' && company !== 'All Companies') {
       where.companyName = { contains: company };
     }
@@ -342,13 +359,21 @@ router.get('/expiry-analysis', async (req, res) => {
 // POST /api/inventory/quarantine - Lock / Release product batch quarantine status
 router.post('/quarantine', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.body.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { productId, isQuarantined, quarantineReason, updatedBy } = req.body;
 
     if (!productId) {
       return res.status(400).json({ error: 'productId is required' });
     }
 
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    const product = await prisma.product.findFirst({
+      where: {
+        id: productId,
+        ...(isTenant ? { userId } : {}),
+      },
+    });
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }

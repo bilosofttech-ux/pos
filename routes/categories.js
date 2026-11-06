@@ -19,8 +19,10 @@ const DEFAULT_CATEGORIES = [
 router.get('/', async (req, res, next) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId || null;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const products = await prisma.product.findMany({
-      where: userId ? { userId } : {},
+      where: isTenant ? { userId } : {},
       select: { category: true },
       distinct: ['category'],
     });

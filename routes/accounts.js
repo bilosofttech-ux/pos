@@ -60,9 +60,13 @@ router.get('/expenses', async (req, res) => {
 // GET /expense-heads - Fetch all unique saved expense heads / categories from DB
 router.get('/expense-heads', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const transactions = await prisma.accountTransaction.findMany({
       where: {
         transactionType: 'Expense',
+        ...(isTenant ? { userId } : {}),
       },
       select: {
         partyName: true,
@@ -122,7 +126,7 @@ router.get('/summary', async (req, res) => {
     const [invoices, purchases, transactions, customers, vendors] = await Promise.all([
       prisma.invoice.findMany({ where: isTenant ? { userId } : {} }),
       prisma.purchase.findMany({ where: isTenant ? { userId } : {} }),
-      prisma.accountTransaction.findMany(),
+      prisma.accountTransaction.findMany({ where: isTenant ? { userId } : {} }),
       prisma.customer.findMany({ where: isTenant ? { OR: [{ userId }, { accountNo: 1 }] } : {} }),
       prisma.vendor.findMany({ where: isTenant ? { OR: [{ userId }, { vendorNo: 1 }] } : {} }),
     ]);
@@ -312,6 +316,9 @@ router.get('/summary', async (req, res) => {
 // 2. GET /api/accounts/customer-aging - Customer Receivables Aging Ledger Analysis with Date Filtering
 router.get('/customer-aging', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { startDate, endDate } = req.query;
     let start = null;
     let end = null;
@@ -329,16 +336,26 @@ router.get('/customer-aging', async (req, res) => {
       }
     }
 
+    const customerWhere = isTenant
+      ? {
+          OR: [
+            { userId },
+            { accountNo: 1, invoices: { some: { userId } } },
+          ],
+        }
+      : {};
     const customers = await prisma.customer.findMany({
+      where: customerWhere,
       include: {
         invoices: {
+          where: isTenant ? { userId } : {},
           orderBy: { invoiceDate: 'desc' },
         },
       },
     });
 
     const transactions = await prisma.accountTransaction.findMany({
-      where: { partyType: 'Customer' },
+      where: { partyType: 'Customer', ...(isTenant ? { userId } : {}) },
     });
 
     const now = new Date();
@@ -440,6 +457,9 @@ router.get('/customer-aging', async (req, res) => {
 // 3. GET /api/accounts/supplier-aging - Supplier Payables Aging Ledger Analysis with Date Filtering
 router.get('/supplier-aging', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { startDate, endDate } = req.query;
     let start = null;
     let end = null;
@@ -457,16 +477,26 @@ router.get('/supplier-aging', async (req, res) => {
       }
     }
 
+    const vendorWhere = isTenant
+      ? {
+          OR: [
+            { userId },
+            { vendorNo: 1, purchases: { some: { userId } } },
+          ],
+        }
+      : {};
     const vendors = await prisma.vendor.findMany({
+      where: vendorWhere,
       include: {
         purchases: {
+          where: isTenant ? { userId } : {},
           orderBy: { purchaseDate: 'desc' },
         },
       },
     });
 
     const transactions = await prisma.accountTransaction.findMany({
-      where: { partyType: 'Vendor' },
+      where: { partyType: 'Vendor', ...(isTenant ? { userId } : {}) },
     });
 
     const now = new Date();
@@ -558,6 +588,9 @@ router.get('/supplier-aging', async (req, res) => {
 // 4. GET /api/accounts/statement/:partyType/:partyId - Customer or Supplier Date-wise Detailed Ledger Statement
 router.get('/statement/:partyType/:partyId', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { partyType, partyId } = req.params;
     const { startDate, endDate } = req.query;
 
@@ -583,7 +616,12 @@ router.get('/statement/:partyType/:partyId', async (req, res) => {
     if (partyType === 'Customer') {
       const customer = await prisma.customer.findUnique({
         where: { id: partyId },
-        include: { invoices: true },
+        include: {
+          invoices: {
+            where: isTenant ? { userId } : {},
+            orderBy: { invoiceDate: 'asc' },
+          },
+        },
       });
 
       if (!customer) return res.status(404).json({ error: 'Customer not found' });
@@ -625,7 +663,11 @@ router.get('/statement/:partyType/:partyId', async (req, res) => {
 
       // Add Customer Receipts as CREDIT entries (-) and Cash Refunds as DEBIT entries (+)
       const receipts = await prisma.accountTransaction.findMany({
-        where: { partyType: 'Customer', OR: [{ partyId }, { partyName: customer.name }] },
+        where: {
+          partyType: 'Customer',
+          ...(isTenant ? { userId } : {}),
+          OR: [{ partyId }, { partyName: customer.name }],
+        },
       });
 
       receipts.forEach((r) => {
@@ -644,7 +686,12 @@ router.get('/statement/:partyType/:partyId', async (req, res) => {
     } else if (partyType === 'Vendor') {
       const vendor = await prisma.vendor.findUnique({
         where: { id: partyId },
-        include: { purchases: true },
+        include: {
+          purchases: {
+            where: isTenant ? { userId } : {},
+            orderBy: { purchaseDate: 'asc' },
+          },
+        },
       });
 
       if (!vendor) return res.status(404).json({ error: 'Supplier not found' });
@@ -687,7 +734,11 @@ router.get('/statement/:partyType/:partyId', async (req, res) => {
 
       // Add Supplier Payments as DEBIT entries (-)
       const payments = await prisma.accountTransaction.findMany({
-        where: { partyType: 'Vendor', OR: [{ partyId }, { partyName: vendor.name }] },
+        where: {
+          partyType: 'Vendor',
+          ...(isTenant ? { userId } : {}),
+          OR: [{ partyId }, { partyName: vendor.name }],
+        },
       });
 
       payments.forEach((p) => {
@@ -777,14 +828,18 @@ router.get('/statement/:partyType/:partyId', async (req, res) => {
 // POST /api/accounts/recheck-ledgers - Audit & Auto-Correct Ledger Discrepancies
 router.post('/recheck-ledgers', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.body.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     let correctedCount = 0;
     const details = [];
 
-    // 1. Fetch all invoices, customer receipts, and customer accounts
+    // 1. Fetch all invoices, customer receipts, and customer accounts (filtered by tenant)
+    const tenantFilter = isTenant ? { userId } : {};
     const [invoices, receipts, customers] = await Promise.all([
-      prisma.invoice.findMany({ include: { customer: true } }),
-      prisma.accountTransaction.findMany({ where: { partyType: 'Customer' } }),
-      prisma.customer.findMany({ include: { invoices: true } }),
+      prisma.invoice.findMany({ where: tenantFilter, include: { customer: true } }),
+      prisma.accountTransaction.findMany({ where: { partyType: 'Customer', ...tenantFilter } }),
+      prisma.customer.findMany({ where: isTenant ? { OR: [{ userId }, { accountNo: 1 }] } : {}, include: { invoices: { where: tenantFilter } } }),
     ]);
 
     // 2. Audit POS checkout receipts vs Invoice totals
@@ -837,7 +892,7 @@ router.post('/recheck-ledgers', async (req, res) => {
     }
 
     // 4. Audit party ID mapping for Vendor / Supplier transactions
-    const vendors = await prisma.vendor.findMany();
+    const vendors = await prisma.vendor.findMany({ where: isTenant ? { OR: [{ userId }, { vendorNo: 1 }] } : {} });
     for (const v of vendors) {
       const unmappedVendorTxs = await prisma.accountTransaction.findMany({
         where: {
@@ -985,7 +1040,11 @@ router.post(['/voucher', '/transactions'], async (req, res) => {
 // 6. GET /api/accounts/transactions - List all journal entries
 router.get('/transactions', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const transactions = await prisma.accountTransaction.findMany({
+      where: isTenant ? { userId } : {},
       orderBy: { createdAt: 'desc' },
       take: 100,
     });

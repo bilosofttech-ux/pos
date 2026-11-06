@@ -174,6 +174,9 @@ router.post('/', async (req, res) => {
 // 4. PATCH /api/claims/:id/status - Update Supplier Claim Status (Pending -> Approved -> Adjusted)
 router.patch('/:id/status', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.body.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { id } = req.params;
     const { status, notes } = req.body;
 
@@ -181,8 +184,11 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ error: 'Invalid status value' });
     }
 
-    const claim = await prisma.supplierClaim.findUnique({
-      where: { id },
+    const claim = await prisma.supplierClaim.findFirst({
+      where: {
+        id,
+        ...(isTenant ? { userId } : {}),
+      },
       include: { vendor: true },
     });
 
@@ -199,12 +205,16 @@ router.patch('/:id/status', async (req, res) => {
     // If claim status becomes Adjusted or Refunded, check if debit voucher exists before logging
     if ((status === 'Adjusted' || status === 'Refunded') && claim.status !== 'Adjusted' && claim.status !== 'Refunded') {
       const existingTx = await prisma.accountTransaction.findFirst({
-        where: { referenceNo: claim.claimNo },
+        where: {
+          referenceNo: claim.claimNo,
+          ...(isTenant ? { userId } : {}),
+        },
       });
       if (!existingTx) {
         const count = await prisma.accountTransaction.count();
         await prisma.accountTransaction.create({
           data: {
+            userId: claim.userId || userId || null,
             voucherNo: `DN-${String(count + 1001)}`,
             transactionType: 'SupplierPayment',
             partyType: 'Vendor',

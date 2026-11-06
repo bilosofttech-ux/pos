@@ -3,13 +3,16 @@ const prisma = require('../lib/prisma');
 
 const router = express.Router();
 
-// Helper to ensure Default Customer Account #1 (Counter Sale) exists in DB
-async function ensureCounterSaleCustomer() {
+// Helper to ensure Default Customer Account #1 (Counter Sale) exists for a tenant in DB
+async function ensureCounterSaleCustomer(tenantUserId) {
   try {
-    const count = await prisma.customer.count();
-    if (count === 0) {
+    const existing = await prisma.customer.findFirst({
+      where: { accountNo: 1, userId: tenantUserId || null },
+    });
+    if (!existing) {
       await prisma.customer.create({
         data: {
+          userId: tenantUserId || null,
           accountNo: 1,
           name: 'Counter Sale',
           address: 'Local Wholesale Market',
@@ -25,14 +28,13 @@ async function ensureCounterSaleCustomer() {
 // GET all customers ordered by accountNo ascending
 router.get('/', async (req, res, next) => {
   try {
-    await ensureCounterSaleCustomer();
     const userId = req.headers['x-user-id'] || req.query.userId;
     const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
+    await ensureCounterSaleCustomer(isTenant ? userId : null);
     const where = {};
-    if (userId && userRole !== 'SuperAdmin') {
-      where.userId = userId;
-    } else if (!userId) {
-      where.userId = null;
+    if (isTenant) {
+      where.OR = [{ userId }, { userId: null, accountNo: 1 }];
     }
     const customers = await prisma.customer.findMany({
       where,

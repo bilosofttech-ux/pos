@@ -8,12 +8,18 @@ const prisma = require('../lib/prisma');
  */
 router.get('/pull', async (req, res, next) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
+    const tenantFilter = isTenant ? { userId } : {};
+
     const { lastSyncTime, full } = req.query;
     const sinceDate = (!full && lastSyncTime) ? new Date(lastSyncTime) : null;
     const isFullSync = full === 'true' || !sinceDate || isNaN(sinceDate.getTime());
 
     // 1. Products with Batches & Vendor Info (Always pull full products for reliable offline inventory)
     const products = await prisma.product.findMany({
+      where: tenantFilter,
       include: {
         vendor: { select: { id: true, name: true, area: true, contactNo: true } },
         batches: { orderBy: { expiryDate: 'asc' } }
@@ -23,27 +29,42 @@ router.get('/pull', async (req, res, next) => {
 
     // 2. Customers
     const customers = await prisma.customer.findMany({
+      where: isTenant ? { OR: [{ userId }, { accountNo: 1, invoices: { some: { userId } } }] } : {},
       orderBy: { name: 'asc' }
     });
 
     // 3. Vendors / Suppliers
     const vendors = await prisma.vendor.findMany({
+      where: isTenant ? { OR: [{ userId }, { vendorNo: 1, purchases: { some: { userId } } }] } : {},
       orderBy: { name: 'asc' }
     });
 
     // 4. Company & Branches
     const company = await prisma.company.findFirst({
+      where: isTenant ? { userId } : {},
       include: { branches: true }
     });
 
-    // 5. Users & Permissions
+    // 5. Users & Permissions (never leak other tenants' users)
     const users = await prisma.user.findMany({
-      where: { isActive: true },
-      include: { permissions: true }
+      where: {
+        isActive: true,
+        ...(isTenant ? { id: userId } : {}),
+      },
+      select: {
+        id: true,
+        fullName: true,
+        username: true,
+        email: true,
+        role: true,
+        isActive: true,
+        permissions: true,
+      }
     });
 
     // 6. Invoices (Always pull full historical invoices for offline lookup)
     const invoices = await prisma.invoice.findMany({
+      where: tenantFilter,
       include: {
         customer: { select: { id: true, name: true, address: true, accountNo: true } },
         items: {
@@ -56,6 +77,7 @@ router.get('/pull', async (req, res, next) => {
 
     // 7. Purchases (Always pull full purchases for offline lookup)
     const purchases = await prisma.purchase.findMany({
+      where: tenantFilter,
       include: {
         vendor: { select: { id: true, name: true, area: true } },
         items: {
@@ -68,13 +90,17 @@ router.get('/pull', async (req, res, next) => {
 
     // 8. Account Transactions / Ledgers (Always pull full transactions)
     const transactions = await prisma.accountTransaction.findMany({
+      where: tenantFilter,
       orderBy: { transactionDate: 'desc' },
       take: 500
     });
 
     // 9. HR Employees & Payroll
     const employees = await prisma.employee.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        ...tenantFilter,
+      },
       include: {
         attendances: { orderBy: { date: 'desc' }, take: 30 },
         advances: { orderBy: { requestDate: 'desc' }, take: 10 }
@@ -83,11 +109,13 @@ router.get('/pull', async (req, res, next) => {
 
     // 10. Fixed Assets
     const fixedAssets = await prisma.fixedAsset.findMany({
+      where: tenantFilter,
       include: { depreciations: true }
     });
 
     // 11. Supplier Claims
     const supplierClaims = await prisma.supplierClaim.findMany({
+      where: tenantFilter,
       include: { items: true },
       orderBy: { claimDate: 'desc' }
     });
@@ -132,6 +160,7 @@ router.get('/pull', async (req, res, next) => {
  */
 router.post('/push', async (req, res, next) => {
   try {
+    const tenantUserId = req.body.userId || req.headers['x-user-id'] || null;
     const {
       invoices = [],
       transactions = [],
@@ -167,6 +196,7 @@ router.post('/push', async (req, res, next) => {
         await prisma.$transaction(async (tx) => {
           await tx.invoice.create({
             data: {
+              userId: tenantUserId,
               invoiceNo: inv.invoiceNo,
               customerId: inv.customerId,
               customerName: inv.customerName,
@@ -215,6 +245,7 @@ router.post('/push', async (req, res, next) => {
           if (inv.customerId) {
             await tx.accountTransaction.create({
               data: {
+                userId: tenantUserId,
                 voucherNo: `REC-MOB-${inv.invoiceNo}`,
                 transactionType: 'CustomerReceipt',
                 partyType: 'Customer',
@@ -249,6 +280,7 @@ router.post('/push', async (req, res, next) => {
         if (!existing) {
           await prisma.accountTransaction.create({
             data: {
+              userId: tenantUserId,
               voucherNo: trx.voucherNo,
               transactionType: trx.transactionType || 'CustomerReceipt',
               partyType: trx.partyType || 'Customer',
@@ -274,6 +306,7 @@ router.post('/push', async (req, res, next) => {
         await prisma.$transaction(async (tx) => {
           await tx.stockAdjustment.create({
             data: {
+              userId: tenantUserId,
               productId: adj.productId,
               adjustmentType: adj.adjustmentType || 'PhysicalCount',
               quantity: parseInt(adj.quantity, 10),

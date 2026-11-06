@@ -100,9 +100,11 @@ router.get('/', (req, res) => {
   try {
     const { status } = req.query;
     const userId = req.headers['x-user-id'] || req.query.userId || null;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     let orders = readOrders();
-    if (userId) {
-      orders = orders.filter(o => !o.userId || o.userId === userId);
+    if (isTenant) {
+      orders = orders.filter(o => o.userId === userId);
     }
     const filtered = status && status !== 'ALL'
       ? orders.filter(o => o.status === status)
@@ -118,9 +120,11 @@ router.get('/', (req, res) => {
 router.get('/pending-count', (req, res) => {
   try {
     const userId = req.headers['x-user-id'] || req.query.userId || null;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     let orders = readOrders();
-    if (userId) {
-      orders = orders.filter(o => !o.userId || o.userId === userId);
+    if (isTenant) {
+      orders = orders.filter(o => o.userId === userId);
     }
     const pending = orders.filter(o => o.status === 'PENDING');
     res.json({ count: pending.length, latestOrder: pending[pending.length - 1] || null });
@@ -174,6 +178,7 @@ router.post('/', (req, res) => {
 
     const newOrder = {
       id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      userId: req.body.userId || req.headers['x-user-id'] || null,
       orderNo,
       customerName: customerName ? customerName.trim() : 'Market Booker Customer',
       customerPhone: customerPhone ? customerPhone.trim() : '',

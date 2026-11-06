@@ -338,6 +338,9 @@ router.post('/', async (req, res) => {
 // 4. PUT /api/assets/:id - Update an existing fixed asset
 router.put('/:id', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.body.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { id } = req.params;
     const {
       name,
@@ -356,7 +359,12 @@ router.put('/:id', async (req, res) => {
       notes,
     } = req.body;
 
-    const existing = await prisma.fixedAsset.findUnique({ where: { id } });
+    const existing = await prisma.fixedAsset.findFirst({
+      where: {
+        id,
+        ...(isTenant ? { userId } : {}),
+      },
+    });
     if (!existing) {
       return res.status(404).json({ error: 'Asset not found' });
     }
@@ -400,7 +408,21 @@ router.put('/:id', async (req, res) => {
 // 5. DELETE /api/assets/:id - Delete / Dispose fixed asset
 router.delete('/:id', async (req, res) => {
   try {
+    const userId = req.headers['x-user-id'] || req.query.userId;
+    const userRole = req.headers['x-user-role'];
+    const isTenant = userId && userRole !== 'SuperAdmin';
     const { id } = req.params;
+
+    const existing = await prisma.fixedAsset.findFirst({
+      where: {
+        id,
+        ...(isTenant ? { userId } : {}),
+      },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+
     await prisma.fixedAsset.delete({ where: { id } });
     res.json({ success: true, message: 'Fixed asset deleted successfully' });
   } catch (err) {
